@@ -18,11 +18,14 @@ import java.util.logging.Logger;
  */
 public class JNativeHookShortcutService implements GlobalShortcutService {
 
+    private static final long STALE_CHORD_IDLE_NANOS = 3_000_000_000L;
+
     private final Object lock = new Object();
     private final Set<String> pressedKeys = new HashSet<>();
     private NativeKeyListener activeListener;
     private boolean hookRegistered;
     private boolean chordTriggered;
+    private long lastKeyEventNanos;
 
     @Override
     public ShortcutRegistrationResult register(Shortcut shortcut, Runnable onTriggered) {
@@ -33,6 +36,7 @@ public class JNativeHookShortcutService implements GlobalShortcutService {
             unregisterListenerOnly();
             pressedKeys.clear();
             chordTriggered = false;
+            lastKeyEventNanos = 0L;
             silenceJNativeHookLogger();
 
             try {
@@ -46,8 +50,18 @@ public class JNativeHookShortcutService implements GlobalShortcutService {
                     public void nativeKeyPressed(NativeKeyEvent event) {
                         boolean shouldFire = false;
                         synchronized (lock) {
-                            pressedKeys.add(ShortcutMatcher.normalizeNativeKey(event.getKeyCode()));
-                            ShortcutMatcher.syncModifiers(pressedKeys, event.getModifiers());
+                            long now = System.nanoTime();
+                            if (lastKeyEventNanos != 0L && (now - lastKeyEventNanos) > STALE_CHORD_IDLE_NANOS) {
+                                // Clear any keys whose release events were swallowed by OS desktop
+                                // switches (e.g. Win+L lock screen, Ctrl+Alt+Del, or UAC prompts).
+                                pressedKeys.clear();
+                                chordTriggered = false;
+                            }
+                            lastKeyEventNanos = now;
+
+                            String normalized = ShortcutMatcher.normalizeNativeKey(event.getKeyCode());
+                            pressedKeys.add(normalized);
+                            ShortcutMatcher.syncModifiers(pressedKeys, event.getModifiers(), normalized);
                             if (!chordTriggered && ShortcutMatcher.matchesChord(shortcut, pressedKeys)) {
                                 chordTriggered = true;
                                 shouldFire = true;
@@ -61,6 +75,7 @@ public class JNativeHookShortcutService implements GlobalShortcutService {
                     @Override
                     public void nativeKeyReleased(NativeKeyEvent event) {
                         synchronized (lock) {
+                            lastKeyEventNanos = System.nanoTime();
                             pressedKeys.remove(ShortcutMatcher.normalizeNativeKey(event.getKeyCode()));
                             if (pressedKeys.isEmpty() || !ShortcutMatcher.matchesChord(shortcut, pressedKeys)) {
                                 chordTriggered = false;

@@ -31,7 +31,6 @@ A local-first, privacy-focused clipboard history manager built with **Java 25** 
 - **Optional Auto-Paste**: Automatically paste the selected item into your previous app instead of only copying it.
 - **Rich Clipboard Formats**: Support for images and files in addition to plain text.
 - **App Exclusion Rules**: Automatically ignore copies from password managers or chosen apps.
-- **Windows Testing & Packaging**: Full verification and installer support on Windows 10/11.
 
 ## Architecture
 
@@ -43,7 +42,7 @@ src/main/java/com/kerim/reclip/
   history/         # ClipboardEntry, HistoryRepository, InMemory/File repositories, HistoryService
   hotkey/          # GlobalShortcutService, JNativeHook chord matching, OutsideClickDetector
   ipc/             # ReclipIpcServer (Unix domain socket) & Chrome NativeMessagingHost
-  platform/        # macOS AppKit focus, vibrancy, titlebar, reopen & NSStatusBar adapters
+  platform/        # macOS AppKit & Windows Win32/DWM focus, titlebar, and tray adapters
   ui/              # PickerWindow, DashboardWindow, SettingsPane, SettingsWindow, TrayController
 ```
 
@@ -58,9 +57,11 @@ Download **[Reclip-1.0.0.dmg](https://github.com/Kerim-Ucar/reclip/releases)**, 
 ### Requirements
 
 - **Java 25** (JDK 25)
-- Gradle Wrapper (`./gradlew`, included)
+- Gradle Wrapper (`./gradlew` on macOS / `.\gradlew.bat` on Windows, included)
 
 ### Running, Testing & Packaging
+
+#### macOS
 
 ```bash
 # Run unit tests
@@ -76,9 +77,25 @@ Download **[Reclip-1.0.0.dmg](https://github.com/Kerim-Ucar/reclip/releases)**, 
 ./gradlew packageMacDmg
 ```
 
+#### Windows 10 / 11
+
+```powershell
+# Run unit tests
+.\gradlew.bat test
+
+# Run the application
+.\gradlew.bat run
+
+# Build self-contained build\dist\Reclip\Reclip.exe app image
+.\gradlew.bat packageWinApp
+
+# Build per-user Windows .exe installer (requires WiX Toolset on PATH)
+.\gradlew.bat packageWinExe
+```
+
 ## Optional Integrations
 
-- **Chrome Right-Click Menu**: See [extensions/chrome/README.md](extensions/chrome/README.md).
+- **Chrome Right-Click Menu (macOS & Windows)**: See [extensions/chrome/README.md](extensions/chrome/README.md).
 - **macOS Services Menu**: See [extensions/macos/README.md](extensions/macos/README.md).
 
 ## Privacy & Storage
@@ -90,7 +107,7 @@ Download **[Reclip-1.0.0.dmg](https://github.com/Kerim-Ucar/reclip/releases)**, 
 ## Platform Status
 
 - **macOS (`aarch64`)**: Built and tested on macOS with Java 25 and JavaFX 25.
-- **Windows**: Core Java/JavaFX/JNativeHook code is structured for cross-platform support, but Windows packaging, tray behavior, and focus restoration have not yet been tested.
+- **Windows 11 (`x86_64`)**: Built and tested on Windows 11 with Java 25 and JavaFX 25 (system tray, global shortcuts, DPI-aware cursor picker, dark DWM title bars, foreground focus restoration, and `jpackage` `Reclip.exe` app image).
 
 ## License
 

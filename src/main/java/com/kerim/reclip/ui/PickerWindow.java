@@ -5,6 +5,7 @@ import com.kerim.reclip.history.ClipboardEntry;
 import com.kerim.reclip.history.HistoryService;
 import com.kerim.reclip.hotkey.OutsideClickDetector;
 import com.kerim.reclip.platform.WindowFocusHelper;
+import com.kerim.reclip.platform.windows.WindowsWindowHelper;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Point2D;
@@ -53,6 +54,7 @@ public class PickerWindow {
     private final ListView<ClipboardEntry> historyList;
     private ContextMenu activeContextMenu;
     private int maxVisibleEntries = MAX_VISIBLE_ENTRIES;
+    private boolean showingInProgress;
 
     /**
      * Creates the mini picker window backed by the given stage, history service, and selection handler.
@@ -80,7 +82,7 @@ public class PickerWindow {
         stage.initStyle(StageStyle.TRANSPARENT);
         stage.setAlwaysOnTop(true);
         stage.focusedProperty().addListener((obs, wasFocused, isFocused) -> {
-            if (!isFocused && stage.isShowing() && !isContextMenuShowing()) {
+            if (!showingInProgress && !isFocused && stage.isShowing() && !isContextMenuShowing()) {
                 hideWithoutFocusRestore();
             }
         });
@@ -96,6 +98,9 @@ public class PickerWindow {
         VBox.setVgrow(card, Priority.ALWAYS);
 
         StackPane root = new StackPane(card);
+        if (WindowsWindowHelper.isWindows()) {
+            root.getStyleClass().add("platform-windows");
+        }
         root.setStyle("-fx-background-color: transparent;");
 
         Scene scene = new Scene(root, DEFAULT_WIDTH, DEFAULT_HEIGHT, Color.TRANSPARENT);
@@ -161,6 +166,7 @@ public class PickerWindow {
      */
     public void show() {
         Runnable showTask = () -> {
+            showingInProgress = true;
             WindowFocusHelper.capturePreviousApp();
             refresh();
             positionAtCursor();
@@ -170,10 +176,16 @@ public class PickerWindow {
             stage.requestFocus();
             historyList.requestFocus();
             Platform.runLater(() -> {
-                WindowFocusHelper.requestAppForeground();
-                stage.toFront();
-                stage.requestFocus();
-                historyList.requestFocus();
+                try {
+                    if (stage.isShowing()) {
+                        WindowFocusHelper.requestAppForeground();
+                        stage.toFront();
+                        stage.requestFocus();
+                        historyList.requestFocus();
+                    }
+                } finally {
+                    showingInProgress = false;
+                }
             });
             outsideClickDetector.start(this::handleNativeMousePress);
         };
@@ -202,6 +214,7 @@ public class PickerWindow {
         }
         outsideClickDetector.stop();
         Runnable hideTask = () -> {
+            showingInProgress = false;
             stage.hide();
             if (restorePreviousFocus) {
                 WindowFocusHelper.restorePreviousAppFocus();
@@ -218,17 +231,35 @@ public class PickerWindow {
 
     private void handleNativeMousePress(int x, int y) {
         Platform.runLater(() -> {
-            if (stage.isShowing() && !isContextMenuShowing() && !containsScreenPoint(x, y)) {
+            if (!stage.isShowing() || isContextMenuShowing()) {
+                return;
+            }
+            Point2D point = resolveLogicalScreenPoint(x, y);
+            if (!containsScreenPoint(point.getX(), point.getY())) {
                 hideWithoutFocusRestore();
             }
         });
+    }
+
+    private static Point2D resolveLogicalScreenPoint(int nativeX, int nativeY) {
+        if (WindowsWindowHelper.isWindows()) {
+            try {
+                return new Robot().getMousePosition();
+            } catch (RuntimeException ignored) {
+                Screen primary = Screen.getPrimary();
+                double scaleX = primary != null && primary.getOutputScaleX() > 0 ? primary.getOutputScaleX() : 1.0;
+                double scaleY = primary != null && primary.getOutputScaleY() > 0 ? primary.getOutputScaleY() : 1.0;
+                return new Point2D(nativeX / scaleX, nativeY / scaleY);
+            }
+        }
+        return new Point2D(nativeX, nativeY);
     }
 
     private boolean isContextMenuShowing() {
         return activeContextMenu != null && activeContextMenu.isShowing();
     }
 
-    private boolean containsScreenPoint(int x, int y) {
+    private boolean containsScreenPoint(double x, double y) {
         double left = stage.getX();
         double top = stage.getY();
         double right = left + stage.getWidth();
@@ -242,7 +273,7 @@ public class PickerWindow {
     public void toggle() {
         Runnable toggleTask = () -> {
             if (stage.isShowing() && stage.isFocused()) {
-                stage.hide();
+                hide();
             } else {
                 show();
             }

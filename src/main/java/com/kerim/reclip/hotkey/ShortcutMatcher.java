@@ -12,7 +12,9 @@ import java.util.Set;
  */
 public final class ShortcutMatcher {
 
+    private static final int VC_CONTROL_RIGHT = 0x0E1D;
     private static final int VC_SHIFT_RIGHT = 0x0036;
+    private static final int VC_ALT_RIGHT = 0x0E38;
     private static final int VC_META_RIGHT = 0x0E5C;
 
     private ShortcutMatcher() {
@@ -26,9 +28,9 @@ public final class ShortcutMatcher {
 
     static String normalizeNativeKey(int nativeKeyCode) {
         return switch (nativeKeyCode) {
-            case NativeKeyEvent.VC_CONTROL -> "CTRL";
+            case NativeKeyEvent.VC_CONTROL, VC_CONTROL_RIGHT -> "CTRL";
             case NativeKeyEvent.VC_SHIFT, VC_SHIFT_RIGHT -> "SHIFT";
-            case NativeKeyEvent.VC_ALT -> "ALT";
+            case NativeKeyEvent.VC_ALT, VC_ALT_RIGHT -> "ALT";
             case NativeKeyEvent.VC_META, VC_META_RIGHT -> "META";
             case NativeKeyEvent.VC_SPACE -> "SPACE";
             case NativeKeyEvent.VC_ENTER -> "ENTER";
@@ -54,16 +56,22 @@ public final class ShortcutMatcher {
         };
     }
 
-    static void syncModifiers(Set<String> pressedKeys, int nativeModifiers) {
-        syncFlag(pressedKeys, (nativeModifiers & NativeInputEvent.CTRL_MASK) != 0, "CTRL");
-        syncFlag(pressedKeys, (nativeModifiers & NativeInputEvent.SHIFT_MASK) != 0, "SHIFT");
-        syncFlag(pressedKeys, (nativeModifiers & NativeInputEvent.ALT_MASK) != 0, "ALT");
-        syncFlag(pressedKeys, (nativeModifiers & NativeInputEvent.META_MASK) != 0, "META");
+    static void syncModifiers(Set<String> pressedKeys, int nativeModifiers, String currentPressedKey) {
+        syncFlag(pressedKeys, (nativeModifiers & NativeInputEvent.CTRL_MASK) != 0, "CTRL", currentPressedKey);
+        syncFlag(pressedKeys, (nativeModifiers & NativeInputEvent.SHIFT_MASK) != 0, "SHIFT", currentPressedKey);
+        syncFlag(pressedKeys, (nativeModifiers & NativeInputEvent.ALT_MASK) != 0, "ALT", currentPressedKey);
+        syncFlag(pressedKeys, (nativeModifiers & NativeInputEvent.META_MASK) != 0, "META", currentPressedKey);
     }
 
-    private static void syncFlag(Set<String> pressedKeys, boolean active, String key) {
-        if (active) {
-            pressedKeys.add(key);
+    private static void syncFlag(
+            Set<String> pressedKeys,
+            boolean active,
+            String modifierKey,
+            String currentPressedKey) {
+        if (active || modifierKey.equals(currentPressedKey)) {
+            pressedKeys.add(modifierKey);
+        } else {
+            pressedKeys.remove(modifierKey);
         }
     }
 }
