@@ -180,19 +180,54 @@ tasks.register('packageWinApp', Exec) {
             '--dest', layout.buildDirectory.dir('dist').get().asFile.absolutePath
 }
 
-tasks.register('packageWinExe', Exec) {
-    dependsOn tasks.named('packageWinApp')
-    doFirst {
-        def hasWix = ['wix.exe', 'candle.exe'].any { tool ->
+tasks.register('ensureWixToolset') {
+    def wixCacheDir = new File(gradle.gradleUserHomeDir, 'caches/reclip-wix/wix314')
+    outputs.dir(wixCacheDir)
+
+    doLast {
+        def onPath = ['wix.exe', 'candle.exe'].any { tool ->
             System.getenv('PATH')?.split(File.pathSeparator)?.any { dir ->
                 dir && new File(dir, tool).isFile()
             }
         }
-        if (!hasWix) {
-            throw new GradleException(
-                    'WiX Toolset is required by jpackage to build a .exe installer. ' +
-                    'Install WiX (`dotnet tool install --global wix` or `winget install WixToolset.WixToolset`), ' +
-                    'or use `./gradlew packageWinApp` to build the standalone build/dist/Reclip/Reclip.exe app image.')
+        if (onPath || new File(wixCacheDir, 'candle.exe').isFile()) {
+            return
+        }
+        wixCacheDir.mkdirs()
+        def localBuildWix = layout.buildDirectory.dir('tools/wix').get().asFile
+        if (new File(localBuildWix, 'candle.exe').isFile()) {
+            project.copy {
+                from localBuildWix
+                into wixCacheDir
+            }
+            return
+        }
+        def zipFile = new File(wixCacheDir, 'wix314-binaries.zip')
+        logger.lifecycle('Downloading portable WiX Toolset 3.14.1 for jpackage Windows installer...')
+        new URI('https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip')
+                .toURL()
+                .withInputStream { input ->
+                    java.nio.file.Files.copy(input, zipFile.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                }
+        project.copy {
+            from zipTree(zipFile)
+            into wixCacheDir
+        }
+        zipFile.delete()
+    }
+}
+
+tasks.register('packageWinExe', Exec) {
+    dependsOn tasks.named('packageWinApp'), tasks.named('ensureWixToolset')
+    doFirst {
+        def exeOut = layout.buildDirectory.file('dist/Reclip-1.0.0.exe').get().asFile
+        if (exeOut.exists()) {
+            delete exeOut
+        }
+        def wixCacheDir = new File(gradle.gradleUserHomeDir, 'caches/reclip-wix/wix314')
+        if (wixCacheDir.isDirectory()) {
+            def currentPath = System.getenv('PATH') ?: ''
+            environment 'PATH', "${wixCacheDir.absolutePath}${File.pathSeparator}${currentPath}"
         }
     }
     commandLine 'jpackage',
@@ -202,6 +237,7 @@ tasks.register('packageWinExe', Exec) {
             '--vendor', 'Reclip',
             '--app-image', layout.buildDirectory.dir('dist/Reclip').get().asFile.absolutePath,
             '--icon', layout.buildDirectory.file('icon/Reclip.ico').get().asFile.absolutePath,
+            '--win-upgrade-uuid', '8f4c9b2a-51d7-4e63-9c12-7a3b8d90e1f4',
             '--win-per-user-install',
             '--win-dir-chooser',
             '--win-menu',

@@ -89,7 +89,7 @@ Download **[Reclip-1.0.0.dmg](https://github.com/Kerim-Ucar/reclip/releases)**, 
 # Build self-contained build\dist\Reclip\Reclip.exe app image
 .\gradlew.bat packageWinApp
 
-# Build per-user Windows .exe installer (requires WiX Toolset on PATH)
+# Build build\dist\Reclip-1.0.0.exe per-user installer (auto-fetches portable WiX if needed)
 .\gradlew.bat packageWinExe
 ```
 
