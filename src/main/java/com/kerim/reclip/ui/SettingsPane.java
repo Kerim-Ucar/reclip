@@ -357,7 +357,7 @@ public class SettingsPane extends VBox {
             case CONTROL -> "CTRL";
             case SHIFT -> "SHIFT";
             case ALT, ALT_GRAPH -> "ALT";
-            case META, COMMAND -> "META";
+            case META, COMMAND, WINDOWS -> "META";
             case SPACE -> "SPACE";
             case ENTER -> "ENTER";
             case TAB -> "TAB";

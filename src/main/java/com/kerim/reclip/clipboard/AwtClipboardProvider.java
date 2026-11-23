@@ -15,6 +15,10 @@ import java.util.Optional;
  */
 public class AwtClipboardProvider implements ClipboardProvider {
 
+    private static final int READ_MAX_ATTEMPTS = 2;
+    private static final int WRITE_MAX_ATTEMPTS = 4;
+    private static final long CONTENTION_BACKOFF_MS = 15L;
+
     private final Clipboard clipboard;
 
     /**
@@ -35,29 +39,52 @@ public class AwtClipboardProvider implements ClipboardProvider {
 
     @Override
     public Optional<String> readText() {
-        try {
-            if (!clipboard.isDataFlavorAvailable(DataFlavor.stringFlavor)) {
+        for (int attempt = 1; attempt <= READ_MAX_ATTEMPTS; attempt++) {
+            try {
+                if (!clipboard.isDataFlavorAvailable(DataFlavor.stringFlavor)) {
+                    return Optional.empty();
+                }
+                Object data = clipboard.getData(DataFlavor.stringFlavor);
+                if (data instanceof String text) {
+                    return Optional.of(text);
+                }
+                return Optional.empty();
+            } catch (IllegalStateException e) {
+                if (attempt == READ_MAX_ATTEMPTS || !sleepQuietly(CONTENTION_BACKOFF_MS)) {
+                    return Optional.empty();
+                }
+            } catch (UnsupportedFlavorException | IOException | HeadlessException | SecurityException e) {
                 return Optional.empty();
             }
-            Object data = clipboard.getData(DataFlavor.stringFlavor);
-            if (data instanceof String text) {
-                return Optional.of(text);
-            }
-            return Optional.empty();
-        } catch (IllegalStateException | UnsupportedFlavorException | IOException
-                 | HeadlessException | SecurityException e) {
-            return Optional.empty();
         }
+        return Optional.empty();
     }
 
     @Override
     public boolean writeText(String text) {
         Objects.requireNonNull(text, "text must not be null");
+        StringSelection selection = new StringSelection(text);
+        for (int attempt = 1; attempt <= WRITE_MAX_ATTEMPTS; attempt++) {
+            try {
+                clipboard.setContents(selection, null);
+                return true;
+            } catch (IllegalStateException e) {
+                if (attempt == WRITE_MAX_ATTEMPTS || !sleepQuietly(CONTENTION_BACKOFF_MS)) {
+                    return false;
+                }
+            } catch (HeadlessException | SecurityException e) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    private static boolean sleepQuietly(long millis) {
         try {
-            StringSelection selection = new StringSelection(text);
-            clipboard.setContents(selection, null);
+            Thread.sleep(millis);
             return true;
-        } catch (IllegalStateException | HeadlessException | SecurityException e) {
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
             return false;
         }
     }

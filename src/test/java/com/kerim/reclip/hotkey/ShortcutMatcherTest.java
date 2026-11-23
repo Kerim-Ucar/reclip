@@ -1,8 +1,10 @@
 package com.kerim.reclip.hotkey;
 
+import com.github.kwhat.jnativehook.NativeInputEvent;
 import com.github.kwhat.jnativehook.keyboard.NativeKeyEvent;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashSet;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -21,6 +23,28 @@ class ShortcutMatcherTest {
                 ShortcutMatcher.normalizeNativeKey(NativeKeyEvent.VC_SPACE));
 
         assertTrue(ShortcutMatcher.matchesChord(shortcut, pressed));
+    }
+
+    @Test
+    void normalizesWindowsRightHandModifierScancodes() {
+        assertEquals("CTRL", ShortcutMatcher.normalizeNativeKey(0x0E1D));
+        assertEquals("SHIFT", ShortcutMatcher.normalizeNativeKey(0x0036));
+        assertEquals("ALT", ShortcutMatcher.normalizeNativeKey(0x0E38));
+        assertEquals("META", ShortcutMatcher.normalizeNativeKey(0x0E5C));
+    }
+
+    @Test
+    void syncModifiersClearsStaleUnheldModifiersWhileKeepingPressedModifier() {
+        Set<String> pressed = new HashSet<>(Set.of("META", "ALT", "CTRL", "SPACE"));
+        int modifiersMask = NativeInputEvent.CTRL_MASK | NativeInputEvent.SHIFT_MASK;
+
+        ShortcutMatcher.syncModifiers(pressed, modifiersMask, "SPACE");
+
+        assertEquals(Set.of("CTRL", "SHIFT", "SPACE"), pressed);
+
+        Set<String> freshModifierPress = new HashSet<>(Set.of("CTRL"));
+        ShortcutMatcher.syncModifiers(freshModifierPress, 0, "CTRL");
+        assertEquals(Set.of("CTRL"), freshModifierPress);
     }
 
     @Test

@@ -17,6 +17,7 @@ import com.kerim.reclip.hotkey.OutsideClickDetector;
 import com.kerim.reclip.hotkey.ShortcutRegistrationResult;
 import com.kerim.reclip.ipc.ReclipIpcServer;
 import com.kerim.reclip.platform.WindowFocusHelper;
+import com.kerim.reclip.platform.windows.WindowsWindowHelper;
 import com.kerim.reclip.ui.DashboardWindow;
 import com.kerim.reclip.ui.PickerWindow;
 import com.kerim.reclip.ui.SettingsPane;
@@ -25,6 +26,7 @@ import com.kerim.reclip.ui.TrayController;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.stage.Stage;
+import javafx.stage.StageStyle;
 
 import java.awt.Desktop;
 import java.awt.desktop.AppReopenedListener;
@@ -91,8 +93,9 @@ public class ReclipApp extends Application {
         clipboardObserver.setPaused(currentSettings.monitoringPaused());
 
         outsideClickDetector = new OutsideClickDetector();
+        Stage pickerStage = createPickerStage(primaryStage);
         PickerWindow pickerWindow = new PickerWindow(
-                primaryStage,
+                pickerStage,
                 historyService,
                 entry -> {
                     clipboardObserver.markSelfWritten(entry.content());
@@ -177,7 +180,8 @@ public class ReclipApp extends Application {
                     settingsRepository.save(currentSettings);
                 },
                 historyService::clearUnpinned,
-                () -> Platform.runLater(Platform::exit));
+                () -> Platform.runLater(Platform::exit),
+                currentSettings.monitoringPaused());
         trayController.install();
 
         ipcServer = new ReclipIpcServer(
@@ -197,7 +201,7 @@ public class ReclipApp extends Application {
 
         Runtime.getRuntime().addShutdownHook(new Thread(this::cleanupResources, "reclip-shutdown"));
 
-        primaryStage.setOnCloseRequest(event -> {
+        pickerStage.setOnCloseRequest(event -> {
             event.consume();
             pickerWindow.hide();
         });
@@ -242,6 +246,26 @@ public class ReclipApp extends Application {
         if (instanceLock != null) {
             instanceLock.close();
         }
+    }
+
+    private static Stage createPickerStage(Stage primaryStage) {
+        if (!WindowsWindowHelper.isWindows()) {
+            return primaryStage;
+        }
+        // Own the transparent popup with an invisible UTILITY stage so Windows never
+        // creates a taskbar button when toggling the floating picker.
+        primaryStage.initStyle(StageStyle.UTILITY);
+        primaryStage.setTitle("");
+        primaryStage.setOpacity(0.0);
+        primaryStage.setWidth(1);
+        primaryStage.setHeight(1);
+        primaryStage.setX(-32000);
+        primaryStage.setY(-32000);
+        primaryStage.show();
+
+        Stage pickerStage = new Stage();
+        pickerStage.initOwner(primaryStage);
+        return pickerStage;
     }
 
     private static void registerAppReopenHandler(Runnable onReopen) {

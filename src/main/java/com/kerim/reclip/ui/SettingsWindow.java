@@ -75,6 +75,9 @@ public class SettingsWindow {
     public void show() {
         Runnable showTask = () -> {
             settingsPane.reload();
+            if (stage.isIconified()) {
+                stage.setIconified(false);
+            }
             stage.setOpacity(0);
             stage.show();
             WindowFocusHelper.applyDarkTitleBar();

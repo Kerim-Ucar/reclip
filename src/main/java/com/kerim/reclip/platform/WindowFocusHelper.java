@@ -1,5 +1,7 @@
 package com.kerim.reclip.platform;
 
+import com.kerim.reclip.platform.windows.WindowsWindowHelper;
+
 import java.awt.Desktop;
 import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
@@ -133,10 +135,14 @@ public final class WindowFocusHelper {
     }
 
     /**
-     * Captures the currently active external application on macOS before Reclip
-     * takes foreground focus, so it can be restored when the popup closes.
+     * Captures the currently active external application before Reclip takes
+     * foreground focus, so it can be restored when the popup closes.
      */
     public static void capturePreviousApp() {
+        if (WindowsWindowHelper.isWindows()) {
+            WindowsWindowHelper.capturePreviousApp();
+            return;
+        }
         if (!isMacOs()) {
             return;
         }
@@ -169,9 +175,13 @@ public final class WindowFocusHelper {
     }
 
     /**
-     * Restores focus to the previously captured external application on macOS.
+     * Restores focus to the previously captured external application.
      */
     public static void restorePreviousAppFocus() {
+        if (WindowsWindowHelper.isWindows()) {
+            WindowsWindowHelper.restorePreviousAppFocus();
+            return;
+        }
         if (!isMacOs()) {
             return;
         }
@@ -198,6 +208,10 @@ public final class WindowFocusHelper {
      * the user clicked directly onto another window).
      */
     public static void clearPreviousApp() {
+        if (WindowsWindowHelper.isWindows()) {
+            WindowsWindowHelper.clearPreviousApp();
+            return;
+        }
         if (!isMacOs()) {
             return;
         }
@@ -221,10 +235,17 @@ public final class WindowFocusHelper {
     }
 
     /**
-     * Brings the application to the foreground on macOS without modifying
-     * window Space behavior or adding vibrancy backdrops (used for Dashboard/Settings).
+     * Brings the application to the foreground without modifying macOS window Space
+     * behavior or adding vibrancy backdrops (used for Dashboard/Settings).
      */
     public static void activateAppOnly() {
+        if (WindowsWindowHelper.isWindows()) {
+            if (WindowsWindowHelper.activateTitledWindow()) {
+                return;
+            }
+            requestAwtForeground();
+            return;
+        }
         if (!isMacOs()) {
             requestAwtForeground();
             return;
@@ -241,10 +262,14 @@ public final class WindowFocusHelper {
     }
 
     /**
-     * Styles titled application windows (such as Settings) on macOS with a dark
-     * transparent title bar matching {@code #1C1C1E}.
+     * Styles titled application windows (such as Dashboard and Settings) with a dark
+     * title bar matching {@code #222224} on macOS and Windows 11.
      */
     public static void applyDarkTitleBar() {
+        if (WindowsWindowHelper.isWindows()) {
+            WindowsWindowHelper.applyDarkTitleBar();
+            return;
+        }
         if (!isMacOs()) {
             return;
         }
@@ -294,10 +319,13 @@ public final class WindowFocusHelper {
     }
 
     /**
-     * Marks all app windows to join all Spaces, applies native macOS frosted-glass
-     * vibrancy, and brings the app to the foreground on the current Space.
+     * Brings the picker popup to the foreground on the active desktop/Space
+     * (applying macOS vibrancy or Windows tool-window foreground activation).
      */
     public static void requestAppForeground() {
+        if (WindowsWindowHelper.isWindows() && WindowsWindowHelper.activatePickerWindow()) {
+            return;
+        }
         if (isMacOs() && activateMacOsApp()) {
             return;
         }
