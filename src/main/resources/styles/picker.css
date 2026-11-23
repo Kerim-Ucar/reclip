@@ -1,0 +1,63 @@
+.picker-card {
+    -fx-background-color: transparent;
+    -fx-border-color: rgba(255, 255, 255, 0.24);
+    -fx-border-width: 1;
+    -fx-background-radius: 10;
+    -fx-border-radius: 10;
+    -fx-padding: 5;
+}
+
+.picker-list {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+    -fx-padding: 0;
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
+}
+
+.picker-list .virtual-flow,
+.picker-list .clipped-container,
+.picker-list .sheet {
+    -fx-background-color: transparent;
+}
+
+.picker-list .placeholder .label {
+    -fx-text-fill: rgba(255, 255, 255, 0.45);
+    -fx-font-family: "SF Pro Text", -apple-system, system-ui, sans-serif;
+    -fx-font-size: 13px;
+}
+
+.picker-list .list-cell {
+    -fx-background-color: transparent;
+    -fx-text-fill: rgba(255, 255, 255, 0.92);
+    -fx-font-family: "SF Pro Text", -apple-system, system-ui, sans-serif;
+    -fx-font-size: 13px;
+    -fx-padding: 6 10 6 10;
+    -fx-background-radius: 6;
+    -fx-border-color: transparent transparent rgba(255, 255, 255, 0.08) transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.picker-list .list-cell:empty {
+    -fx-border-width: 0;
+    -fx-padding: 0;
+}
+
+.picker-list .list-cell:filled:hover {
+    -fx-background-color: rgba(255, 255, 255, 0.10);
+}
+
+.picker-list .list-cell:filled:selected,
+.picker-list .list-cell:filled:selected:focused {
+    -fx-background-color: rgba(84, 168, 255, 0.68);
+    -fx-text-fill: #FFFFFF;
+}
+
+.list-view .scroll-bar:horizontal,
+.list-view .scroll-bar:vertical {
+    -fx-pref-width: 0;
+    -fx-pref-height: 0;
+    -fx-max-width: 0;
+    -fx-max-height: 0;
+    -fx-opacity: 0;
+}
