@@ -17,6 +17,14 @@ public interface HistoryRepository {
     void save(ClipboardEntry entry);
 
     /**
+     * Finds an entry by its unique id.
+     *
+     * @param id entry id
+     * @return matching entry if present
+     */
+    Optional<ClipboardEntry> findById(UUID id);
+
+    /**
      * Finds an existing entry matching the given content type and exact content.
      *
      * @param contentType the content type

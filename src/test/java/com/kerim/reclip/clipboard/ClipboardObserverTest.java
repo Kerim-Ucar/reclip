@@ -82,6 +82,25 @@ class ClipboardObserverTest {
     }
 
     @Test
+    void pausesAndResumesObservation() {
+        FakeClipboardProvider provider = new FakeClipboardProvider();
+        List<ClipboardTextEvent> events = new ArrayList<>();
+        try (ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
+             ClipboardObserver observer = newObserver(provider, events, executor)) {
+
+            observer.setPaused(true);
+            provider.setText("while-paused");
+            observer.pollOnce();
+            assertEquals(0, events.size());
+
+            observer.setPaused(false);
+            observer.pollOnce();
+            assertEquals(1, events.size());
+            assertEquals("while-paused", events.getFirst().text());
+        }
+    }
+
+    @Test
     void rejectsNonPositivePollInterval() {
         FakeClipboardProvider provider = new FakeClipboardProvider();
         assertThrows(IllegalArgumentException.class,

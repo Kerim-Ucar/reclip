@@ -93,6 +93,47 @@ public class HistoryService {
     }
 
     /**
+     * Toggles the pinned status of the given entry and notifies listeners.
+     *
+     * @param id entry id
+     * @return the updated entry, or empty if not found
+     */
+    public Optional<ClipboardEntry> togglePinned(UUID id) {
+        Objects.requireNonNull(id, "id must not be null");
+        Optional<ClipboardEntry> existing = repository.findById(id);
+        if (existing.isEmpty()) {
+            return Optional.empty();
+        }
+        ClipboardEntry updated = existing.get().withPinned(!existing.get().pinned());
+        repository.save(updated);
+        notifyListeners();
+        return Optional.of(updated);
+    }
+
+    /**
+     * Deletes an entry by id and notifies listeners if it existed.
+     *
+     * @param id entry id
+     * @return {@code true} if an entry was removed
+     */
+    public boolean deleteEntry(UUID id) {
+        Objects.requireNonNull(id, "id must not be null");
+        boolean removed = repository.deleteById(id);
+        if (removed) {
+            notifyListeners();
+        }
+        return removed;
+    }
+
+    /**
+     * Removes all unpinned entries and notifies listeners.
+     */
+    public void clearUnpinned() {
+        repository.clearUnpinned();
+        notifyListeners();
+    }
+
+    /**
      * Registers a listener notified whenever history changes.
      *
      * @param listener callback to invoke on history updates

@@ -94,9 +94,9 @@ Clipboard histories can contain passwords, authentication tokens, personal data,
 
 ### Phase 2 — Everyday usability
 - [ ] SQLite persistence and bounded retention.
-- [ ] System tray/menu-bar controls and single-instance startup.
-- [ ] Configurable shortcut, pinned entries, delete/clear history.
-- [ ] Settings for monitoring pause and persistence mode.
+- [x] System tray/menu-bar controls and single-instance startup.
+- [x] Configurable shortcut, pinned entries, delete/clear history.
+- [x] Settings for monitoring pause and persistence mode.
 - [ ] Usable keyboard focus and multi-monitor positioning.
 
 ### Phase 3 — Polish and robustness

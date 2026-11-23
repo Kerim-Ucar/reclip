@@ -90,6 +90,41 @@ class HistoryServiceTest {
     }
 
     @Test
+    void clearUnpinnedRemovesUnpinnedEntriesWhileKeepingPinned() {
+        InMemoryHistoryRepository repository = new InMemoryHistoryRepository();
+        HistoryService service = new HistoryService(repository);
+
+        ClipboardEntry pinned = service.recordText("keep-me", T1);
+        repository.save(pinned.withPinned(true));
+        service.recordText("remove-me", T2);
+
+        AtomicInteger notifications = new AtomicInteger();
+        service.addChangeListener(notifications::incrementAndGet);
+
+        service.clearUnpinned();
+
+        List<ClipboardEntry> remaining = service.listAll();
+        assertEquals(1, remaining.size());
+        assertEquals("keep-me", remaining.getFirst().content());
+        assertEquals(1, notifications.get());
+    }
+
+    @Test
+    void togglesPinnedAndDeletesIndividualEntries() {
+        HistoryService service = new HistoryService(new InMemoryHistoryRepository());
+        ClipboardEntry first = service.recordText("first", T1);
+        ClipboardEntry second = service.recordText("second", T2);
+
+        ClipboardEntry pinned = service.togglePinned(first.id()).orElseThrow();
+        assertEquals(true, pinned.pinned());
+        assertEquals("first", service.listAll().getFirst().content());
+
+        assertEquals(true, service.deleteEntry(second.id()));
+        assertEquals(false, service.deleteEntry(second.id()));
+        assertEquals(1, service.listAll().size());
+    }
+
+    @Test
     void validatesArguments() {
         InMemoryHistoryRepository repository = new InMemoryHistoryRepository();
         assertThrows(IllegalArgumentException.class, () -> new HistoryService(repository, 0));

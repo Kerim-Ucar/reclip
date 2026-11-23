@@ -13,7 +13,7 @@ import java.util.Locale;
 
 /**
  * Configures OS-level window Space behavior, native macOS vibrancy blur, and
- * foreground focus when triggered from a global shortcut.
+ * foreground focus capture/restoration when triggered from a global shortcut.
  */
 public final class WindowFocusHelper {
 
@@ -38,6 +38,9 @@ public final class WindowFocusHelper {
             ValueLayout.JAVA_DOUBLE,
             ValueLayout.JAVA_DOUBLE);
 
+    private static final Object PREVIOUS_APP_LOCK = new Object();
+    private static MemorySegment previousFrontmostApp = MemorySegment.NULL;
+
     private WindowFocusHelper() {
     }
 
@@ -58,6 +61,147 @@ public final class WindowFocusHelper {
             }
         } catch (Throwable ignored) {
             // Best-effort macOS accessory configuration.
+        }
+    }
+
+    /**
+     * Captures the currently active external application on macOS before Reclip
+     * takes foreground focus, so it can be restored when the popup closes.
+     */
+    public static void capturePreviousApp() {
+        if (!isMacOs()) {
+            return;
+        }
+        try (Arena arena = Arena.ofConfined()) {
+            ObjC objc = ObjC.load();
+            MemorySegment workspaceClass = objc.getClass(arena.allocateFrom("NSWorkspace"));
+            if (workspaceClass.equals(MemorySegment.NULL)) {
+                return;
+            }
+            MemorySegment workspace = objc.msgSendObj(workspaceClass, arena.allocateFrom("sharedWorkspace"));
+            if (workspace.equals(MemorySegment.NULL)) {
+                return;
+            }
+            MemorySegment frontApp = objc.msgSendObj(workspace, arena.allocateFrom("frontmostApplication"));
+            if (frontApp.equals(MemorySegment.NULL)) {
+                return;
+            }
+            int pid = (int) objc.msgSendInt.invokeExact(frontApp, objc.sel(arena.allocateFrom("processIdentifier")));
+            if (pid == ProcessHandle.current().pid()) {
+                return;
+            }
+            objc.msgSendObj(frontApp, arena.allocateFrom("retain"));
+            synchronized (PREVIOUS_APP_LOCK) {
+                releasePreviousAppLocked(objc, arena);
+                previousFrontmostApp = frontApp;
+            }
+        } catch (Throwable ignored) {
+            // Best-effort capture.
+        }
+    }
+
+    /**
+     * Restores focus to the previously captured external application on macOS.
+     */
+    public static void restorePreviousAppFocus() {
+        if (!isMacOs()) {
+            return;
+        }
+        MemorySegment appToRestore;
+        synchronized (PREVIOUS_APP_LOCK) {
+            appToRestore = previousFrontmostApp;
+            previousFrontmostApp = MemorySegment.NULL;
+        }
+        if (appToRestore.equals(MemorySegment.NULL)) {
+            return;
+        }
+        try (Arena arena = Arena.ofConfined()) {
+            ObjC objc = ObjC.load();
+            objc.msgSendBoolLong(appToRestore, arena.allocateFrom("activateWithOptions:"),
+                    NS_APPLICATION_ACTIVATE_IGNORING_OTHER_APPS);
+            objc.msgSendVoid.invokeExact(appToRestore, objc.sel(arena.allocateFrom("release")));
+        } catch (Throwable ignored) {
+            // Best-effort restore.
+        }
+    }
+
+    /**
+     * Clears any captured previous application without changing focus (e.g. when
+     * the user clicked directly onto another window).
+     */
+    public static void clearPreviousApp() {
+        if (!isMacOs()) {
+            return;
+        }
+        try (Arena arena = Arena.ofConfined()) {
+            ObjC objc = ObjC.load();
+            synchronized (PREVIOUS_APP_LOCK) {
+                releasePreviousAppLocked(objc, arena);
+            }
+        } catch (Throwable ignored) {
+            synchronized (PREVIOUS_APP_LOCK) {
+                previousFrontmostApp = MemorySegment.NULL;
+            }
+        }
+    }
+
+    private static void releasePreviousAppLocked(ObjC objc, Arena arena) throws Throwable {
+        if (!previousFrontmostApp.equals(MemorySegment.NULL)) {
+            objc.msgSendVoid.invokeExact(previousFrontmostApp, objc.sel(arena.allocateFrom("release")));
+            previousFrontmostApp = MemorySegment.NULL;
+        }
+    }
+
+    /**
+     * Styles titled application windows (such as Settings) on macOS with a dark
+     * transparent title bar matching {@code #1C1C1E}.
+     */
+    public static void applyDarkTitleBar() {
+        if (!isMacOs()) {
+            return;
+        }
+        try (Arena arena = Arena.ofConfined()) {
+            ObjC objc = ObjC.load();
+            MemorySegment sharedApp = objc.sharedApplication(arena);
+            if (sharedApp.equals(MemorySegment.NULL)) {
+                return;
+            }
+            MemorySegment windows = objc.msgSendObj(sharedApp, arena.allocateFrom("windows"));
+            if (windows.equals(MemorySegment.NULL)) {
+                return;
+            }
+            MemorySegment darkAppearance = createDarkAquaAppearance(objc, arena);
+            MemorySegment nsColorClass = objc.getClass(arena.allocateFrom("NSColor"));
+            MemorySegment bgColor = (MemorySegment) objc.msgSendObj4Doubles.invokeExact(
+                    nsColorClass,
+                    objc.sel(arena.allocateFrom("colorWithSRGBRed:green:blue:alpha:")),
+                    34.0 / 255.0, 34.0 / 255.0, 36.0 / 255.0, 1.0);
+
+            long count = objc.msgSendLong(windows, arena.allocateFrom("count"));
+            MemorySegment objectAtIndexSel = objc.sel(arena.allocateFrom("objectAtIndex:"));
+            MemorySegment styleMaskSel = objc.sel(arena.allocateFrom("styleMask"));
+            MemorySegment setAppearanceSel = objc.sel(arena.allocateFrom("setAppearance:"));
+            MemorySegment setTitlebarTransparentSel = objc.sel(arena.allocateFrom("setTitlebarAppearsTransparent:"));
+            MemorySegment setBgColorSel = objc.sel(arena.allocateFrom("setBackgroundColor:"));
+
+            for (long i = 0; i < count; i++) {
+                MemorySegment window = (MemorySegment) objc.msgSendObjLong.invokeExact(windows, objectAtIndexSel, i);
+                if (window.equals(MemorySegment.NULL)) {
+                    continue;
+                }
+                long styleMask = (long) objc.msgSendLong.invokeExact(window, styleMaskSel);
+                if ((styleMask & 1L) != 0) {
+                    if (!darkAppearance.equals(MemorySegment.NULL)) {
+                        objc.msgSendVoidObj.invokeExact(window, setAppearanceSel, darkAppearance);
+                    }
+                    objc.msgSendVoidBool.invokeExact(window, setTitlebarTransparentSel, true);
+                    if (!bgColor.equals(MemorySegment.NULL)) {
+                        objc.msgSendVoidObj.invokeExact(window, setBgColorSel, bgColor);
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+            // Best-effort dark title bar.
         }
     }
 
@@ -101,18 +245,35 @@ public final class WindowFocusHelper {
         if (windows.equals(MemorySegment.NULL)) {
             return;
         }
+        MemorySegment statusBarWindowClass = objc.getClass(arena.allocateFrom("NSStatusBarWindow"));
         long count = objc.msgSendLong(windows, arena.allocateFrom("count"));
         MemorySegment objectAtIndexSel = objc.sel(arena.allocateFrom("objectAtIndex:"));
+        MemorySegment isKindOfClassSel = objc.sel(arena.allocateFrom("isKindOfClass:"));
+        MemorySegment levelSel = objc.sel(arena.allocateFrom("level"));
+        MemorySegment styleMaskSel = objc.sel(arena.allocateFrom("styleMask"));
         MemorySegment setBehaviorSel = objc.sel(arena.allocateFrom("setCollectionBehavior:"));
         MemorySegment setHasShadowSel = objc.sel(arena.allocateFrom("setHasShadow:"));
 
         for (long i = 0; i < count; i++) {
             MemorySegment window = (MemorySegment) objc.msgSendObjLong.invokeExact(windows, objectAtIndexSel, i);
-            if (!window.equals(MemorySegment.NULL)) {
-                objc.msgSendVoidLong.invokeExact(window, setBehaviorSel, ALL_SPACES_BEHAVIOR);
-                objc.msgSendVoidBool.invokeExact(window, setHasShadowSel, true);
-                ensureVibrancyBackdrop(objc, window, arena);
+            if (window.equals(MemorySegment.NULL)) {
+                continue;
             }
+            if (!statusBarWindowClass.equals(MemorySegment.NULL)
+                    && (boolean) objc.msgSendBoolObj.invokeExact(window, isKindOfClassSel, statusBarWindowClass)) {
+                continue;
+            }
+            long windowLevel = (long) objc.msgSendLong.invokeExact(window, levelSel);
+            if (windowLevel >= 25L) {
+                continue;
+            }
+            long styleMask = (long) objc.msgSendLong.invokeExact(window, styleMaskSel);
+            if ((styleMask & 1L) != 0) {
+                continue;
+            }
+            objc.msgSendVoidLong.invokeExact(window, setBehaviorSel, ALL_SPACES_BEHAVIOR);
+            objc.msgSendVoidBool.invokeExact(window, setHasShadowSel, true);
+            ensureVibrancyBackdrop(objc, window, arena);
         }
     }
 
@@ -218,10 +379,12 @@ public final class WindowFocusHelper {
             MethodHandle objcGetClass,
             MethodHandle selRegisterName,
             MethodHandle msgSendObj,
+            MethodHandle msgSendInt,
             MethodHandle msgSendLong,
             MethodHandle msgSendObjLong,
             MethodHandle msgSendObjObj,
             MethodHandle msgSendBoolObj,
+            MethodHandle msgSendVoid,
             MethodHandle msgSendVoidObj,
             MethodHandle msgSendVoidBool,
             MethodHandle msgSendVoidLong,
@@ -229,7 +392,8 @@ public final class WindowFocusHelper {
             MethodHandle msgSendBoolLong,
             MethodHandle msgSendVoidObjLongObj,
             MethodHandle msgSendRect,
-            MethodHandle msgSendObjRect) {
+            MethodHandle msgSendObjRect,
+            MethodHandle msgSendObj4Doubles) {
 
         static ObjC load() {
             Linker linker = Linker.nativeLinker();
@@ -243,6 +407,8 @@ public final class WindowFocusHelper {
                     linker.downcallHandle(msgSend,
                             FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS)),
                     linker.downcallHandle(msgSend,
+                            FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS)),
+                    linker.downcallHandle(msgSend,
                             FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.ADDRESS)),
                     linker.downcallHandle(msgSend,
                             FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG)),
@@ -250,6 +416,8 @@ public final class WindowFocusHelper {
                             FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS)),
                     linker.downcallHandle(msgSend,
                             FunctionDescriptor.of(ValueLayout.JAVA_BOOLEAN, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS)),
+                    linker.downcallHandle(msgSend,
+                            FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS)),
                     linker.downcallHandle(msgSend,
                             FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS)),
                     linker.downcallHandle(msgSend,
@@ -265,7 +433,10 @@ public final class WindowFocusHelper {
                     linker.downcallHandle(msgSend,
                             FunctionDescriptor.of(NS_RECT_LAYOUT, ValueLayout.ADDRESS, ValueLayout.ADDRESS)),
                     linker.downcallHandle(msgSend,
-                            FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS, NS_RECT_LAYOUT)));
+                            FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS, NS_RECT_LAYOUT)),
+                    linker.downcallHandle(msgSend,
+                            FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                                    ValueLayout.JAVA_DOUBLE, ValueLayout.JAVA_DOUBLE, ValueLayout.JAVA_DOUBLE, ValueLayout.JAVA_DOUBLE)));
         }
 
         MemorySegment getClass(MemorySegment name) throws Throwable {

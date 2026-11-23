@@ -32,6 +32,7 @@ public class ClipboardObserver implements AutoCloseable {
     private final Object stateLock = new Object();
     private String lastObservedFingerprint;
     private ScheduledFuture<?> pollFuture;
+    private volatile boolean paused;
 
     /**
      * Creates a clipboard observer with a dedicated daemon polling thread.
@@ -133,9 +134,30 @@ public class ClipboardObserver implements AutoCloseable {
     }
 
     /**
+     * Pauses or resumes clipboard observation without stopping the background executor.
+     *
+     * @param paused {@code true} to pause polling, {@code false} to resume
+     */
+    public void setPaused(boolean paused) {
+        this.paused = paused;
+    }
+
+    /**
+     * Returns whether clipboard observation is currently paused.
+     *
+     * @return {@code true} if paused
+     */
+    public boolean isPaused() {
+        return paused;
+    }
+
+    /**
      * Performs a single poll cycle. Exposed for deterministic testing.
      */
     public void pollOnce() {
+        if (paused) {
+            return;
+        }
         Optional<String> current = clipboardProvider.readText();
         if (current.isEmpty()) {
             return;

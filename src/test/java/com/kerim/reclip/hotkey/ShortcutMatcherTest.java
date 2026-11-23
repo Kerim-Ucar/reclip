@@ -1,10 +1,8 @@
 package com.kerim.reclip.hotkey;
 
-import com.github.kwhat.jnativehook.NativeInputEvent;
 import com.github.kwhat.jnativehook.keyboard.NativeKeyEvent;
 import org.junit.jupiter.api.Test;
 
-import java.util.EnumSet;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -15,32 +13,30 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ShortcutMatcherTest {
 
     @Test
-    void matchesExactShortcutAndModifiers() {
+    void matchesDefaultMultiKeyChord() {
         Shortcut shortcut = Shortcut.defaultShortcut();
-        int modifiers = NativeInputEvent.CTRL_L_MASK | NativeInputEvent.SHIFT_L_MASK;
+        Set<String> pressed = Set.of(
+                ShortcutMatcher.normalizeNativeKey(NativeKeyEvent.VC_CONTROL),
+                ShortcutMatcher.normalizeNativeKey(NativeKeyEvent.VC_SHIFT),
+                ShortcutMatcher.normalizeNativeKey(NativeKeyEvent.VC_SPACE));
 
-        assertTrue(ShortcutMatcher.matches(shortcut, modifiers, NativeKeyEvent.VC_SPACE));
+        assertTrue(ShortcutMatcher.matchesChord(shortcut, pressed));
     }
 
     @Test
-    void rejectsMissingOrExtraModifiersAndWrongKey() {
-        Shortcut shortcut = new Shortcut(EnumSet.of(Shortcut.Modifier.CTRL, Shortcut.Modifier.SHIFT), Shortcut.ShortcutKey.V);
+    void matchesUnlimitedConnectedKeysAndSingleKeys() {
+        Shortcut multiChord = Shortcut.of("CTRL", "SHIFT", "A", "B", "1");
+        assertTrue(ShortcutMatcher.matchesChord(multiChord, Set.of("CTRL", "SHIFT", "A", "B", "1")));
+        assertFalse(ShortcutMatcher.matchesChord(multiChord, Set.of("CTRL", "SHIFT", "A", "B")));
+        assertFalse(ShortcutMatcher.matchesChord(multiChord, Set.of("CTRL", "SHIFT", "A", "B", "1", "2")));
 
-        assertFalse(ShortcutMatcher.matches(shortcut, NativeInputEvent.CTRL_MASK, NativeKeyEvent.VC_V));
-        assertFalse(ShortcutMatcher.matches(
-                shortcut,
-                NativeInputEvent.CTRL_MASK | NativeInputEvent.SHIFT_MASK | NativeInputEvent.ALT_MASK,
-                NativeKeyEvent.VC_V));
-        assertFalse(ShortcutMatcher.matches(
-                shortcut,
-                NativeInputEvent.CTRL_MASK | NativeInputEvent.SHIFT_MASK,
-                NativeKeyEvent.VC_C));
+        Shortcut singleKey = Shortcut.of("F8");
+        assertTrue(ShortcutMatcher.matchesChord(singleKey, Set.of("F8")));
     }
 
     @Test
-    void rejectsEmptyModifiersInShortcut() {
-        assertThrows(IllegalArgumentException.class,
-                () -> new Shortcut(Set.of(), Shortcut.ShortcutKey.SPACE));
+    void rejectsEmptyKeysInShortcut() {
+        assertThrows(IllegalArgumentException.class, () -> new Shortcut(Set.of()));
     }
 
     @Test
