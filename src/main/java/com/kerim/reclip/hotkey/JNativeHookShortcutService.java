@@ -5,20 +5,24 @@ import com.github.kwhat.jnativehook.NativeHookException;
 import com.github.kwhat.jnativehook.keyboard.NativeKeyEvent;
 import com.github.kwhat.jnativehook.keyboard.NativeKeyListener;
 
+import java.util.HashSet;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
  * {@link GlobalShortcutService} implementation backed by JNativeHook.
- * Only recognizes the configured shortcut and never logs or records keystrokes.
+ * Only recognizes the configured shortcut chord and never logs or records keystrokes.
  */
 public class JNativeHookShortcutService implements GlobalShortcutService {
 
     private final Object lock = new Object();
+    private final Set<String> pressedKeys = new HashSet<>();
     private NativeKeyListener activeListener;
     private boolean hookRegistered;
+    private boolean chordTriggered;
 
     @Override
     public ShortcutRegistrationResult register(Shortcut shortcut, Runnable onTriggered) {
@@ -27,6 +31,8 @@ public class JNativeHookShortcutService implements GlobalShortcutService {
 
         synchronized (lock) {
             unregisterListenerOnly();
+            pressedKeys.clear();
+            chordTriggered = false;
             silenceJNativeHookLogger();
 
             try {
@@ -38,8 +44,27 @@ public class JNativeHookShortcutService implements GlobalShortcutService {
                 NativeKeyListener listener = new NativeKeyListener() {
                     @Override
                     public void nativeKeyPressed(NativeKeyEvent event) {
-                        if (ShortcutMatcher.matches(shortcut, event.getModifiers(), event.getKeyCode())) {
+                        boolean shouldFire = false;
+                        synchronized (lock) {
+                            pressedKeys.add(ShortcutMatcher.normalizeNativeKey(event.getKeyCode()));
+                            ShortcutMatcher.syncModifiers(pressedKeys, event.getModifiers());
+                            if (!chordTriggered && ShortcutMatcher.matchesChord(shortcut, pressedKeys)) {
+                                chordTriggered = true;
+                                shouldFire = true;
+                            }
+                        }
+                        if (shouldFire) {
                             onTriggered.run();
+                        }
+                    }
+
+                    @Override
+                    public void nativeKeyReleased(NativeKeyEvent event) {
+                        synchronized (lock) {
+                            pressedKeys.remove(ShortcutMatcher.normalizeNativeKey(event.getKeyCode()));
+                            if (pressedKeys.isEmpty() || !ShortcutMatcher.matchesChord(shortcut, pressedKeys)) {
+                                chordTriggered = false;
+                            }
                         }
                     }
                 };

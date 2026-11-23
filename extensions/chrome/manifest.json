@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Reclip",
+  "version": "0.1.0",
+  "description": "Open Reclip clipboard history from Chrome's right-click menu.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "Open Reclip Clipboard",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png"
+    }
+  },
+  "permissions": [
+    "contextMenus",
+    "nativeMessaging"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

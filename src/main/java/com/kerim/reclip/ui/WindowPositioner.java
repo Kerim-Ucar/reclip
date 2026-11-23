@@ -3,6 +3,7 @@ package com.kerim.reclip.ui;
 import javafx.geometry.Point2D;
 import javafx.geometry.Rectangle2D;
 
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -16,6 +17,43 @@ final class WindowPositioner {
     private static final double SCREEN_MARGIN = 8.0;
 
     private WindowPositioner() {
+    }
+
+    /**
+     * Selects the display bounds containing {@code (cursorX, cursorY)}, or the
+     * nearest display if the cursor lies on a gap or edge between monitors.
+     *
+     * @param cursorX       cursor X coordinate
+     * @param cursorY       cursor Y coordinate
+     * @param screenBounds  candidate display visual bounds
+     * @param fallback      fallback bounds when {@code screenBounds} is empty
+     * @return selected display bounds
+     */
+    static Rectangle2D selectTargetScreenBounds(
+            double cursorX,
+            double cursorY,
+            List<Rectangle2D> screenBounds,
+            Rectangle2D fallback) {
+        Objects.requireNonNull(screenBounds, "screenBounds must not be null");
+        Objects.requireNonNull(fallback, "fallback must not be null");
+        if (screenBounds.isEmpty()) {
+            return fallback;
+        }
+        Rectangle2D best = screenBounds.getFirst();
+        double bestDistanceSq = Double.MAX_VALUE;
+        for (Rectangle2D bounds : screenBounds) {
+            if (bounds.contains(cursorX, cursorY)) {
+                return bounds;
+            }
+            double dx = distanceToRange(cursorX, bounds.getMinX(), bounds.getMaxX());
+            double dy = distanceToRange(cursorY, bounds.getMinY(), bounds.getMaxY());
+            double distSq = dx * dx + dy * dy;
+            if (distSq < bestDistanceSq) {
+                bestDistanceSq = distSq;
+                best = bounds;
+            }
+        }
+        return best;
     }
 
     static Point2D positionNearCursor(
@@ -42,6 +80,16 @@ final class WindowPositioner {
                 : cursorY - CURSOR_OFFSET - windowHeight;
 
         return new Point2D(clamp(rawX, minX, maxX), clamp(rawY, minY, maxY));
+    }
+
+    private static double distanceToRange(double value, double min, double max) {
+        if (value < min) {
+            return min - value;
+        }
+        if (value > max) {
+            return value - max;
+        }
+        return 0.0;
     }
 
     private static double clamp(double value, double min, double max) {

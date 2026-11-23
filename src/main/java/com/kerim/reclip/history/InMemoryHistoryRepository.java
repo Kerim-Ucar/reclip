@@ -28,6 +28,12 @@ public class InMemoryHistoryRepository implements HistoryRepository {
     }
 
     @Override
+    public synchronized Optional<ClipboardEntry> findById(UUID id) {
+        Objects.requireNonNull(id, "id must not be null");
+        return Optional.ofNullable(entriesById.get(id));
+    }
+
+    @Override
     public synchronized Optional<ClipboardEntry> findByContent(ContentType contentType, String content) {
         Objects.requireNonNull(contentType, "contentType must not be null");
         Objects.requireNonNull(content, "content must not be null");
@@ -50,10 +56,11 @@ public class InMemoryHistoryRepository implements HistoryRepository {
         }
         String normalizedQuery = query.trim().toLowerCase(Locale.ROOT);
         return entriesById.values().stream()
-                .filter(entry -> entry.content().toLowerCase(Locale.ROOT).contains(normalizedQuery))
+                .filter(entry -> entry.content().toLowerCase(Locale.ROOT).contains(normalizedQuery)
+                        || entry.label().toLowerCase(Locale.ROOT).contains(normalizedQuery))
                 .sorted(Comparator
                         .comparing((ClipboardEntry entry) -> !entry.pinned())
-                        .thenComparingInt(entry -> matchScore(entry.content(), normalizedQuery))
+                        .thenComparingInt(entry -> matchScore(entry.displayText(), normalizedQuery))
                         .thenComparing(ClipboardEntry::lastUsedAt, Comparator.reverseOrder()))
                 .toList();
     }

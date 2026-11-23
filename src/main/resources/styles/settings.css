@@ -1,0 +1,315 @@
+.settings-root {
+    -fx-background-color: #222224;
+    -fx-font-family: "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+}
+
+.settings-group {
+    -fx-background-color: #2C2C2E;
+    -fx-border-color: rgba(255, 255, 255, 0.08);
+    -fx-border-width: 1;
+    -fx-background-radius: 12;
+    -fx-border-radius: 12;
+}
+
+.settings-row {
+    -fx-padding: 12 14 12 14;
+}
+
+.settings-divider {
+    -fx-background-color: rgba(255, 255, 255, 0.08);
+    -fx-pref-height: 1;
+    -fx-max-height: 1;
+}
+
+.row-title {
+    -fx-text-fill: #F5F5F7;
+    -fx-font-size: 13px;
+}
+
+.row-subtitle {
+    -fx-text-fill: #98989D;
+    -fx-font-size: 11px;
+}
+
+.chord-field {
+    -fx-background-color: #1A1A1D;
+    -fx-text-fill: #F5F5F7;
+    -fx-prompt-text-fill: #8E8E93;
+    -fx-border-color: rgba(255, 255, 255, 0.12);
+    -fx-border-width: 1;
+    -fx-background-radius: 8;
+    -fx-border-radius: 8;
+    -fx-padding: 5 10 5 10;
+    -fx-min-height: 28;
+    -fx-font-size: 12.5px;
+    -fx-font-weight: bold;
+}
+
+.chord-field:focused {
+    -fx-border-color: #0A84FF;
+}
+
+.push-button {
+    -fx-background-color: linear-gradient(to bottom, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.09));
+    -fx-text-fill: #F5F5F7;
+    -fx-border-color: rgba(255, 255, 255, 0.18);
+    -fx-border-width: 1;
+    -fx-background-radius: 999;
+    -fx-border-radius: 999;
+    -fx-padding: 5 14 5 14;
+    -fx-min-height: 28;
+    -fx-font-size: 13px;
+    -fx-cursor: hand;
+}
+
+.push-button:hover {
+    -fx-background-color: linear-gradient(to bottom, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.13));
+}
+
+.push-button:pressed {
+    -fx-background-color: rgba(255, 255, 255, 0.08);
+}
+
+.record-button {
+    -fx-background-color: linear-gradient(to bottom, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.09));
+    -fx-text-fill: #F5F5F7;
+    -fx-border-color: rgba(255, 255, 255, 0.18);
+    -fx-border-width: 1;
+    -fx-background-radius: 999;
+    -fx-border-radius: 999;
+    -fx-padding: 5 14 5 14;
+    -fx-min-height: 28;
+    -fx-font-size: 13px;
+    -fx-cursor: hand;
+}
+
+.record-button:hover {
+    -fx-background-color: linear-gradient(to bottom, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.13));
+}
+
+.record-button:selected {
+    -fx-background-color: linear-gradient(to bottom, rgba(255, 69, 58, 0.34), rgba(255, 69, 58, 0.18));
+    -fx-text-fill: #FF8A80;
+    -fx-border-color: rgba(255, 69, 58, 0.65);
+}
+
+.add-button,
+.remove-button {
+    -fx-background-color: linear-gradient(to bottom, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.09));
+    -fx-border-color: rgba(255, 255, 255, 0.18);
+    -fx-border-width: 1;
+    -fx-background-radius: 999;
+    -fx-border-radius: 999;
+    -fx-padding: 0;
+    -fx-min-width: 30;
+    -fx-pref-width: 30;
+    -fx-min-height: 28;
+    -fx-pref-height: 28;
+    -fx-cursor: hand;
+}
+
+.add-button:hover,
+.remove-button:hover {
+    -fx-background-color: linear-gradient(to bottom, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.13));
+}
+
+.primary-button {
+    -fx-background-color: linear-gradient(to bottom, #1E90FF, #0A78F0);
+    -fx-text-fill: #FFFFFF;
+    -fx-border-color: rgba(255, 255, 255, 0.24);
+    -fx-border-width: 1;
+    -fx-background-radius: 999;
+    -fx-border-radius: 999;
+    -fx-padding: 5 18 5 18;
+    -fx-min-height: 28;
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+    -fx-cursor: hand;
+}
+
+.primary-button:hover {
+    -fx-background-color: linear-gradient(to bottom, #339BFF, #1484FA);
+}
+
+.primary-button:pressed {
+    -fx-background-color: #006CE0;
+}
+
+.apple-slider .track {
+    -fx-background-color: #454549;
+    -fx-background-insets: 0;
+    -fx-background-radius: 2;
+    -fx-padding: 0;
+    -fx-pref-height: 4;
+    -fx-max-height: 4;
+}
+
+.apple-slider .thumb {
+    -fx-background-color: linear-gradient(to bottom, #FFFFFF, #E5E5EA);
+    -fx-border-color: rgba(0, 0, 0, 0.22);
+    -fx-border-width: 0.5;
+    -fx-background-insets: 0;
+    -fx-background-radius: 7;
+    -fx-border-radius: 7;
+    -fx-pref-width: 22;
+    -fx-pref-height: 14;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.35), 4, 0, 0, 1);
+    -fx-cursor: hand;
+}
+
+.apple-slider .axis {
+    -fx-tick-label-fill: #98989D;
+    -fx-font-size: 10px;
+}
+
+.apple-spinner {
+    -fx-background-color: #1A1A1D;
+    -fx-border-color: rgba(255, 255, 255, 0.14);
+    -fx-border-width: 1;
+    -fx-background-radius: 8;
+    -fx-border-radius: 8;
+    -fx-min-height: 28;
+}
+
+.apple-spinner .text-field {
+    -fx-background-color: transparent;
+    -fx-text-fill: #F5F5F7;
+    -fx-font-size: 13px;
+    -fx-alignment: center;
+}
+
+.apple-spinner .increment-arrow-button,
+.apple-spinner .decrement-arrow-button {
+    -fx-background-color: rgba(255, 255, 255, 0.10);
+    -fx-background-radius: 0;
+}
+
+.apple-spinner .increment-arrow-button:hover,
+.apple-spinner .decrement-arrow-button:hover {
+    -fx-background-color: rgba(255, 255, 255, 0.18);
+}
+
+.apple-spinner .increment-arrow,
+.apple-spinner .decrement-arrow {
+    -fx-background-color: #F5F5F7;
+}
+
+.status-ok {
+    -fx-text-fill: #6EE787;
+    -fx-font-size: 12px;
+}
+
+.status-error {
+    -fx-text-fill: #FF6961;
+    -fx-font-size: 12px;
+}
+
+.persisted-list {
+    -fx-background-color: #1A1A1D;
+    -fx-border-color: rgba(255, 255, 255, 0.12);
+    -fx-border-width: 1;
+    -fx-background-radius: 8;
+    -fx-border-radius: 8;
+    -fx-padding: 3;
+    -fx-focus-color: transparent;
+    -fx-faint-focus-color: transparent;
+}
+
+.persisted-list .virtual-flow,
+.persisted-list .clipped-container,
+.persisted-list .sheet {
+    -fx-background-color: transparent;
+}
+
+.persisted-list .placeholder .label {
+    -fx-text-fill: #8E8E93;
+    -fx-font-size: 12px;
+}
+
+.persisted-list .list-cell {
+    -fx-background-color: transparent;
+    -fx-text-fill: #F5F5F7;
+    -fx-font-size: 12.5px;
+    -fx-padding: 4 8 4 8;
+    -fx-background-radius: 5;
+}
+
+.persisted-list .list-cell:filled:hover {
+    -fx-background-color: rgba(255, 255, 255, 0.08);
+}
+
+.persisted-list .list-cell:filled:selected,
+.persisted-list .list-cell:filled:selected:focused {
+    -fx-background-color: #0A84FF;
+    -fx-text-fill: #FFFFFF;
+}
+
+.segment-bar {
+    -fx-background-color: #1A1A1D;
+    -fx-border-color: rgba(255, 255, 255, 0.10);
+    -fx-border-width: 1;
+    -fx-background-radius: 999;
+    -fx-border-radius: 999;
+    -fx-padding: 2;
+}
+
+.segment-button {
+    -fx-background-color: transparent;
+    -fx-text-fill: #A1A1A6;
+    -fx-background-radius: 999;
+    -fx-padding: 4 12 4 12;
+    -fx-font-size: 12.5px;
+    -fx-cursor: hand;
+}
+
+.segment-button:hover {
+    -fx-text-fill: #F5F5F7;
+}
+
+.segment-button:selected {
+    -fx-background-color: linear-gradient(to bottom, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.10));
+    -fx-text-fill: #FFFFFF;
+    -fx-font-weight: bold;
+}
+
+.context-menu {
+    -fx-background-color: rgba(40, 40, 42, 0.96);
+    -fx-border-color: rgba(255, 255, 255, 0.18);
+    -fx-border-width: 1;
+    -fx-background-radius: 8;
+    -fx-border-radius: 8;
+    -fx-padding: 4;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.45), 14, 0, 0, 4);
+}
+
+.context-menu .menu-item {
+    -fx-background-color: transparent;
+    -fx-background-radius: 5;
+    -fx-padding: 4 10 4 10;
+}
+
+.context-menu .menu-item .label {
+    -fx-text-fill: #F5F5F7;
+    -fx-font-family: "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    -fx-font-size: 13px;
+}
+
+.context-menu .menu-item:focused,
+.context-menu .menu-item:hover {
+    -fx-background-color: rgba(84, 168, 255, 0.68);
+}
+
+.context-menu .menu-item:focused .label,
+.context-menu .menu-item:hover .label {
+    -fx-text-fill: #FFFFFF;
+}
+
+.context-menu .separator:horizontal .line {
+    -fx-border-color: rgba(255, 255, 255, 0.12);
+    -fx-border-width: 1 0 0 0;
+    -fx-padding: 0;
+}
+
+.context-menu .separator {
+    -fx-padding: 3 6 3 6;
+}

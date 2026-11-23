@@ -1,24 +1,45 @@
 package com.kerim.reclip.hotkey;
 
-import java.util.EnumSet;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 
 /**
- * Platform-independent representation of a global keyboard shortcut.
+ * Platform-independent representation of a global keyboard shortcut supporting
+ * any combination of one or more connected keys.
  *
- * @param modifiers required modifier keys
- * @param key       primary non-modifier key
+ * @param keys normalized key names that must be pressed together
  */
-public record Shortcut(Set<Modifier> modifiers, ShortcutKey key) {
+public record Shortcut(Set<String> keys) {
+
+    private static final List<String> MODIFIER_ORDER = List.of("CTRL", "ALT", "SHIFT", "META");
 
     public Shortcut {
-        Objects.requireNonNull(modifiers, "modifiers must not be null");
-        Objects.requireNonNull(key, "key must not be null");
-        if (modifiers.isEmpty()) {
-            throw new IllegalArgumentException("modifiers must not be empty");
+        Objects.requireNonNull(keys, "keys must not be null");
+        Set<String> normalized = new LinkedHashSet<>();
+        for (String key : keys) {
+            if (key != null && !key.isBlank()) {
+                normalized.add(key.trim().toUpperCase(Locale.ROOT).replace(' ', '_'));
+            }
         }
-        modifiers = modifiers.isEmpty() ? Set.of() : Set.copyOf(EnumSet.copyOf(modifiers));
+        if (normalized.isEmpty()) {
+            throw new IllegalArgumentException("keys must not be empty");
+        }
+        keys = Set.copyOf(normalized);
+    }
+
+    /**
+     * Creates a shortcut from one or more key names.
+     *
+     * @param keys key names
+     * @return immutable shortcut
+     */
+    public static Shortcut of(String... keys) {
+        return new Shortcut(new LinkedHashSet<>(Arrays.asList(keys)));
     }
 
     /**
@@ -28,26 +49,37 @@ public record Shortcut(Set<Modifier> modifiers, ShortcutKey key) {
      * @return the default shortcut
      */
     public static Shortcut defaultShortcut() {
-        return new Shortcut(EnumSet.of(Modifier.CTRL, Modifier.SHIFT), ShortcutKey.SPACE);
+        return Shortcut.of("CTRL", "SHIFT", "SPACE");
     }
 
     /**
-     * Supported modifier keys for global shortcuts.
+     * Returns a human-readable label for this shortcut.
+     *
+     * @return formatted shortcut string
      */
-    public enum Modifier {
-        CTRL,
-        ALT,
-        SHIFT,
-        META
+    public String format() {
+        List<String> ordered = new ArrayList<>();
+        for (String mod : MODIFIER_ORDER) {
+            if (keys.contains(mod)) {
+                ordered.add(displayName(mod));
+            }
+        }
+        keys.stream()
+                .filter(k -> !MODIFIER_ORDER.contains(k))
+                .sorted()
+                .map(Shortcut::displayName)
+                .forEach(ordered::add);
+        return String.join(" + ", ordered);
     }
 
-    /**
-     * Supported primary keys for global shortcuts.
-     */
-    public enum ShortcutKey {
-        SPACE,
-        V,
-        C,
-        H
+    private static String displayName(String key) {
+        return switch (key) {
+            case "CTRL" -> "Ctrl";
+            case "ALT" -> "Alt";
+            case "SHIFT" -> "Shift";
+            case "META" -> "Cmd/Meta";
+            case "SPACE" -> "Space";
+            default -> key;
+        };
     }
 }

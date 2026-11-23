@@ -40,3 +40,60 @@ dependencies {
 test {
     useJUnitPlatform()
 }
+
+tasks.register('prepareJpackageInput', Sync) {
+    dependsOn tasks.named('jar')
+    from tasks.named('jar').get().archiveFile
+    from configurations.runtimeClasspath
+    into layout.buildDirectory.dir('jpackage-input')
+}
+
+tasks.register('packageMacApp', Exec) {
+    dependsOn tasks.named('prepareJpackageInput')
+    doFirst {
+        def iconSource = file('Smoked-glass clipboard with curved arrow.png')
+        def iconsetDir = layout.buildDirectory.dir('icon/Reclip.iconset').get().asFile
+        def icnsFile = layout.buildDirectory.file('icon/Reclip.icns').get().asFile
+        def distDir = layout.buildDirectory.dir('dist').get().asFile
+        delete distDir
+        iconsetDir.mkdirs()
+
+        [16, 32, 128, 256, 512].each { size ->
+            new ProcessBuilder('sips', '-z', "${size}", "${size}", iconSource.absolutePath,
+                    '--out', new File(iconsetDir, "icon_${size}x${size}.png").absolutePath)
+                    .inheritIO().start().waitFor()
+            def retina = size * 2
+            new ProcessBuilder('sips', '-z', "${retina}", "${retina}", iconSource.absolutePath,
+                    '--out', new File(iconsetDir, "icon_${size}x${size}@2x.png").absolutePath)
+                    .inheritIO().start().waitFor()
+        }
+        def iconResult = new ProcessBuilder('iconutil', '-c', 'icns', iconsetDir.absolutePath, '-o', icnsFile.absolutePath)
+                .inheritIO().start().waitFor()
+        if (iconResult != 0) {
+            throw new GradleException("iconutil failed with exit code ${iconResult}")
+        }
+    }
+
+    commandLine 'jpackage',
+            '--type', 'app-image',
+            '--name', 'Reclip',
+            '--app-version', '1.0.0',
+            '--input', layout.buildDirectory.dir('jpackage-input').get().asFile.absolutePath,
+            '--main-jar', tasks.named('jar').get().archiveFileName.get(),
+            '--main-class', 'com.kerim.reclip.app.Launcher',
+            '--icon', layout.buildDirectory.file('icon/Reclip.icns').get().asFile.absolutePath,
+            '--mac-package-identifier', 'com.kerim.reclip',
+            '--java-options', '--enable-native-access=ALL-UNNAMED',
+            '--dest', layout.buildDirectory.dir('dist').get().asFile.absolutePath
+}
+
+tasks.register('packageMacDmg', Exec) {
+    dependsOn tasks.named('packageMacApp')
+    commandLine 'jpackage',
+            '--type', 'dmg',
+            '--name', 'Reclip',
+            '--app-version', '1.0.0',
+            '--app-image', layout.buildDirectory.dir('dist/Reclip.app').get().asFile.absolutePath,
+            '--icon', layout.buildDirectory.file('icon/Reclip.icns').get().asFile.absolutePath,
+            '--dest', layout.buildDirectory.dir('dist').get().asFile.absolutePath
+}

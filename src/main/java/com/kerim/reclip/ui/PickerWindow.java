@@ -10,10 +10,14 @@ import javafx.geometry.Insets;
 import javafx.geometry.Point2D;
 import javafx.geometry.Rectangle2D;
 import javafx.scene.Scene;
+import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Control;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
+import javafx.scene.control.MenuItem;
+import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.image.Image;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.Priority;
@@ -25,6 +29,8 @@ import javafx.stage.Screen;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.URL;
 import java.util.List;
 import java.util.Objects;
@@ -45,6 +51,8 @@ public class PickerWindow {
     private final Consumer<ClipboardEntry> onEntrySelected;
     private final OutsideClickDetector outsideClickDetector;
     private final ListView<ClipboardEntry> historyList;
+    private ContextMenu activeContextMenu;
+    private int maxVisibleEntries = MAX_VISIBLE_ENTRIES;
 
     /**
      * Creates the mini picker window backed by the given stage, history service, and selection handler.
@@ -72,8 +80,8 @@ public class PickerWindow {
         stage.initStyle(StageStyle.TRANSPARENT);
         stage.setAlwaysOnTop(true);
         stage.focusedProperty().addListener((obs, wasFocused, isFocused) -> {
-            if (!isFocused && stage.isShowing()) {
-                hide();
+            if (!isFocused && stage.isShowing() && !isContextMenuShowing()) {
+                hideWithoutFocusRestore();
             }
         });
 
@@ -105,9 +113,27 @@ public class PickerWindow {
                     moveSelection(1);
                     event.consume();
                 }
+                case HOME -> {
+                    selectIndex(0);
+                    event.consume();
+                }
+                case END -> {
+                    selectIndex(historyList.getItems().size() - 1);
+                    event.consume();
+                }
                 case ENTER -> {
                     selectFocusedEntry();
                     event.consume();
+                }
+                case BACK_SPACE, DELETE -> {
+                    deleteFocusedEntry();
+                    event.consume();
+                }
+                case P -> {
+                    if (event.isShortcutDown()) {
+                        togglePinFocusedEntry();
+                        event.consume();
+                    }
                 }
                 case ESCAPE -> {
                     hide();
@@ -119,6 +145,13 @@ public class PickerWindow {
         });
 
         stage.setTitle(ReclipApp.APP_NAME);
+        try (InputStream iconStream = getClass().getResourceAsStream("/icons/app-icon.png")) {
+            if (iconStream != null) {
+                stage.getIcons().add(new Image(iconStream));
+            }
+        } catch (IOException ignored) {
+            // Best-effort window icon.
+        }
         stage.setResizable(false);
         stage.setScene(scene);
     }
@@ -128,6 +161,7 @@ public class PickerWindow {
      */
     public void show() {
         Runnable showTask = () -> {
+            WindowFocusHelper.capturePreviousApp();
             refresh();
             positionAtCursor();
             stage.show();
@@ -151,23 +185,47 @@ public class PickerWindow {
     }
 
     /**
-     * Hides the picker window without exiting the application.
+     * Hides the picker window and restores focus to the previously active application.
      */
     public void hide() {
+        hideInternal(true);
+    }
+
+    private void hideWithoutFocusRestore() {
+        hideInternal(false);
+    }
+
+    private void hideInternal(boolean restorePreviousFocus) {
+        if (activeContextMenu != null) {
+            activeContextMenu.hide();
+            activeContextMenu = null;
+        }
         outsideClickDetector.stop();
-        if (Platform.isFxApplicationThread()) {
+        Runnable hideTask = () -> {
             stage.hide();
+            if (restorePreviousFocus) {
+                WindowFocusHelper.restorePreviousAppFocus();
+            } else {
+                WindowFocusHelper.clearPreviousApp();
+            }
+        };
+        if (Platform.isFxApplicationThread()) {
+            hideTask.run();
         } else {
-            Platform.runLater(stage::hide);
+            Platform.runLater(hideTask);
         }
     }
 
     private void handleNativeMousePress(int x, int y) {
         Platform.runLater(() -> {
-            if (stage.isShowing() && !containsScreenPoint(x, y)) {
-                hide();
+            if (stage.isShowing() && !isContextMenuShowing() && !containsScreenPoint(x, y)) {
+                hideWithoutFocusRestore();
             }
         });
+    }
+
+    private boolean isContextMenuShowing() {
+        return activeContextMenu != null && activeContextMenu.isShowing();
     }
 
     private boolean containsScreenPoint(int x, int y) {
@@ -197,6 +255,24 @@ public class PickerWindow {
     }
 
     /**
+     * Updates the maximum number of recent copies displayed in the popup.
+     *
+     * @param maxVisibleEntries number of entries to show
+     */
+    public void setMaxVisibleEntries(int maxVisibleEntries) {
+        if (maxVisibleEntries <= 0) {
+            throw new IllegalArgumentException("maxVisibleEntries must be positive");
+        }
+        this.maxVisibleEntries = maxVisibleEntries;
+        Runnable updateTask = this::updateResults;
+        if (Platform.isFxApplicationThread()) {
+            updateTask.run();
+        } else {
+            Platform.runLater(updateTask);
+        }
+    }
+
+    /**
      * Refreshes the displayed list on the JavaFX Application Thread.
      */
     public void refresh() {
@@ -211,15 +287,20 @@ public class PickerWindow {
         try {
             Robot robot = new Robot();
             Point2D cursor = robot.getMousePosition();
-            List<Screen> screens = Screen.getScreensForRectangle(cursor.getX(), cursor.getY(), 1, 1);
-            Rectangle2D bounds = screens.isEmpty()
-                    ? Screen.getPrimary().getVisualBounds()
-                    : screens.getFirst().getVisualBounds();
+            List<Rectangle2D> allBounds = Screen.getScreens().stream()
+                    .map(Screen::getVisualBounds)
+                    .toList();
+            Rectangle2D bounds = WindowPositioner.selectTargetScreenBounds(
+                    cursor.getX(),
+                    cursor.getY(),
+                    allBounds,
+                    Screen.getPrimary().getVisualBounds());
+            double height = stage.getHeight() > 0 ? stage.getHeight() : DEFAULT_HEIGHT;
             Point2D position = WindowPositioner.positionNearCursor(
                     cursor.getX(),
                     cursor.getY(),
                     DEFAULT_WIDTH,
-                    DEFAULT_HEIGHT,
+                    height,
                     bounds);
             stage.setX(position.getX());
             stage.setY(position.getY());
@@ -230,12 +311,26 @@ public class PickerWindow {
 
     private void updateResults() {
         List<ClipboardEntry> recent = historyService.listAll().stream()
-                .limit(MAX_VISIBLE_ENTRIES)
+                .limit(maxVisibleEntries)
                 .toList();
         historyList.getItems().setAll(recent);
         if (!recent.isEmpty()) {
             historyList.getSelectionModel().selectFirst();
         }
+        stage.setHeight(computePopupHeight(recent));
+    }
+
+    private static double computePopupHeight(List<ClipboardEntry> entries) {
+        if (entries.isEmpty()) {
+            return 44.0;
+        }
+        double total = 10.0;
+        for (ClipboardEntry entry : entries) {
+            String preview = formatPreview((entry.pinned() ? "★ " : "") + entry.displayText());
+            int lines = Math.max(1, (int) Math.ceil(preview.length() / 38.0));
+            total += lines * 18.0 + 10.0;
+        }
+        return Math.min(480.0, Math.max(44.0, total));
     }
 
     static String formatPreview(String content) {
@@ -257,15 +352,68 @@ public class PickerWindow {
                 chooseEntry(cell.getItem());
             }
         });
+        cell.setOnContextMenuRequested(event -> {
+            if (cell.isEmpty() || cell.getItem() == null) {
+                return;
+            }
+            if (activeContextMenu != null) {
+                activeContextMenu.hide();
+            }
+            ClipboardEntry entry = cell.getItem();
+            ContextMenu menu = buildEntryContextMenu(entry);
+            activeContextMenu = menu;
+            menu.show(cell, event.getScreenX(), event.getScreenY());
+            event.consume();
+        });
         return cell;
+    }
+
+    private ContextMenu buildEntryContextMenu(ClipboardEntry entry) {
+        MenuItem copyItem = new MenuItem("Copy");
+        copyItem.setOnAction(e -> chooseEntry(entry));
+
+        MenuItem pinItem = new MenuItem(entry.pinned() ? "Unpin" : "Pin");
+        pinItem.setOnAction(e -> historyService.togglePinned(entry.id()));
+
+        MenuItem deleteItem = new MenuItem("Delete");
+        deleteItem.setOnAction(e -> historyService.deleteEntry(entry.id()));
+
+        MenuItem clearItem = new MenuItem("Clear Unpinned");
+        clearItem.setOnAction(e -> historyService.clearUnpinned());
+
+        ContextMenu menu = new ContextMenu(copyItem, pinItem, deleteItem, new SeparatorMenuItem(), clearItem);
+        menu.setOnHidden(e -> {
+            if (activeContextMenu == menu) {
+                activeContextMenu = null;
+            }
+        });
+        return menu;
+    }
+
+    private void deleteFocusedEntry() {
+        ClipboardEntry selected = historyList.getSelectionModel().getSelectedItem();
+        if (selected != null) {
+            historyService.deleteEntry(selected.id());
+        }
+    }
+
+    private void togglePinFocusedEntry() {
+        ClipboardEntry selected = historyList.getSelectionModel().getSelectedItem();
+        if (selected != null) {
+            historyService.togglePinned(selected.id());
+        }
     }
 
     private void moveSelection(int delta) {
         int count = historyList.getItems().size();
         int nextIndex = nextSelectionIndex(historyList.getSelectionModel().getSelectedIndex(), count, delta);
-        if (nextIndex >= 0) {
-            historyList.getSelectionModel().select(nextIndex);
-            historyList.scrollTo(nextIndex);
+        selectIndex(nextIndex);
+    }
+
+    private void selectIndex(int index) {
+        if (index >= 0 && index < historyList.getItems().size()) {
+            historyList.getSelectionModel().select(index);
+            historyList.scrollTo(index);
         }
     }
 
@@ -299,8 +447,8 @@ public class PickerWindow {
             if (empty || item == null) {
                 setText(null);
             } else {
-                String prefix = item.pinned() ? "[Pinned] " : "";
-                setText(prefix + formatPreview(item.content()));
+                String prefix = item.pinned() ? "★ " : "";
+                setText(prefix + formatPreview(item.displayText()));
             }
         }
     }
