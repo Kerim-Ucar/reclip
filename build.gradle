@@ -86,3 +86,14 @@ tasks.register('packageMacApp', Exec) {
             '--java-options', '--enable-native-access=ALL-UNNAMED',
             '--dest', layout.buildDirectory.dir('dist').get().asFile.absolutePath
 }
+
+tasks.register('packageMacDmg', Exec) {
+    dependsOn tasks.named('packageMacApp')
+    commandLine 'jpackage',
+            '--type', 'dmg',
+            '--name', 'Reclip',
+            '--app-version', '1.0.0',
+            '--app-image', layout.buildDirectory.dir('dist/Reclip.app').get().asFile.absolutePath,
+            '--icon', layout.buildDirectory.file('icon/Reclip.icns').get().asFile.absolutePath,
+            '--dest', layout.buildDirectory.dir('dist').get().asFile.absolutePath
+}

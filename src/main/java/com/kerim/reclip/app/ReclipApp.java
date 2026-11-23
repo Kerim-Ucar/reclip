@@ -26,6 +26,8 @@ import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.stage.Stage;
 
+import java.awt.Desktop;
+import java.awt.desktop.AppReopenedListener;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -108,6 +110,9 @@ public class ReclipApp extends Application {
             DashboardWindow dw = dashboardHolder[0];
             boolean recording = (sw != null && sw.isRecording()) || (dw != null && dw.isRecording());
             if (!recording) {
+                if (dw != null) {
+                    dw.hide();
+                }
                 pickerWindow.toggle();
             }
         };
@@ -177,13 +182,18 @@ public class ReclipApp extends Application {
 
         ipcServer = new ReclipIpcServer(
                 ReclipIpcServer.defaultSocketPath(),
-                pickerWindow::show,
+                () -> {
+                    dashboardWindow.hide();
+                    pickerWindow.show();
+                },
                 dashboardWindow::show);
         try {
             ipcServer.start();
         } catch (IOException e) {
             System.err.println("Unable to start local IPC server: " + e.getMessage());
         }
+
+        registerAppReopenHandler(dashboardWindow::show);
 
         Runtime.getRuntime().addShutdownHook(new Thread(this::cleanupResources, "reclip-shutdown"));
 
@@ -231,6 +241,17 @@ public class ReclipApp extends Application {
         }
         if (instanceLock != null) {
             instanceLock.close();
+        }
+    }
+
+    private static void registerAppReopenHandler(Runnable onReopen) {
+        WindowFocusHelper.registerReopenHandler(onReopen);
+        try {
+            if (Desktop.isDesktopSupported()) {
+                Desktop.getDesktop().addAppEventListener((AppReopenedListener) event -> onReopen.run());
+            }
+        } catch (UnsupportedOperationException | SecurityException ignored) {
+            // Best-effort reopen handler.
         }
     }
 }

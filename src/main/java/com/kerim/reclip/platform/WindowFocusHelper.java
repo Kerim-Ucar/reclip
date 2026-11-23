@@ -9,6 +9,8 @@ import java.lang.foreign.MemorySegment;
 import java.lang.foreign.SymbolLookup;
 import java.lang.foreign.ValueLayout;
 import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.util.Locale;
 
 /**
@@ -40,8 +42,74 @@ public final class WindowFocusHelper {
 
     private static final Object PREVIOUS_APP_LOCK = new Object();
     private static MemorySegment previousFrontmostApp = MemorySegment.NULL;
+    private static Arena reopenArena;
+    private static Runnable reopenCallback;
 
     private WindowFocusHelper() {
+    }
+
+    /**
+     * Registers a native macOS {@code applicationShouldHandleReopen:hasVisibleWindows:}
+     * handler on the JavaFX {@code NSApplication} delegate so clicking the app icon
+     * while already running reopens the main panel.
+     *
+     * @param onReopen callback invoked when macOS sends a reopen event
+     */
+    public static void registerReopenHandler(Runnable onReopen) {
+        if (!isMacOs() || onReopen == null) {
+            return;
+        }
+        reopenCallback = onReopen;
+        if (reopenArena != null) {
+            return;
+        }
+        try {
+            reopenArena = Arena.ofShared();
+            ObjC objc = ObjC.load();
+            MemorySegment sharedApp = objc.sharedApplication(reopenArena);
+            if (sharedApp.equals(MemorySegment.NULL)) {
+                return;
+            }
+            MemorySegment delegate = objc.msgSendObj(sharedApp, reopenArena.allocateFrom("delegate"));
+            if (delegate.equals(MemorySegment.NULL)) {
+                return;
+            }
+            MemorySegment delegateClass = (MemorySegment) objc.objectGetClass.invokeExact(delegate);
+            if (delegateClass.equals(MemorySegment.NULL)) {
+                return;
+            }
+            MethodHandle target = MethodHandles.lookup().findStatic(
+                    WindowFocusHelper.class,
+                    "handleMacOsReopen",
+                    MethodType.methodType(boolean.class, MemorySegment.class, MemorySegment.class, MemorySegment.class, boolean.class));
+            FunctionDescriptor desc = FunctionDescriptor.of(
+                    ValueLayout.JAVA_BOOLEAN,
+                    ValueLayout.ADDRESS,
+                    ValueLayout.ADDRESS,
+                    ValueLayout.ADDRESS,
+                    ValueLayout.JAVA_BOOLEAN);
+            MemorySegment stub = Linker.nativeLinker().upcallStub(target, desc, reopenArena);
+            MemorySegment ignored = (MemorySegment) objc.classReplaceMethod.invokeExact(
+                    delegateClass,
+                    objc.sel(reopenArena.allocateFrom("applicationShouldHandleReopen:hasVisibleWindows:")),
+                    stub,
+                    reopenArena.allocateFrom("B@:@B"));
+        } catch (Throwable ignored) {
+            // Best-effort native reopen handler.
+        }
+    }
+
+    @SuppressWarnings("unused")
+    private static boolean handleMacOsReopen(
+            MemorySegment self,
+            MemorySegment sel,
+            MemorySegment app,
+            boolean hasVisibleWindows) {
+        Runnable callback = reopenCallback;
+        if (callback != null) {
+            callback.run();
+        }
+        return true;
     }
 
     /**
@@ -149,6 +217,26 @@ public final class WindowFocusHelper {
         if (!previousFrontmostApp.equals(MemorySegment.NULL)) {
             objc.msgSendVoid.invokeExact(previousFrontmostApp, objc.sel(arena.allocateFrom("release")));
             previousFrontmostApp = MemorySegment.NULL;
+        }
+    }
+
+    /**
+     * Brings the application to the foreground on macOS without modifying
+     * window Space behavior or adding vibrancy backdrops (used for Dashboard/Settings).
+     */
+    public static void activateAppOnly() {
+        if (!isMacOs()) {
+            requestAwtForeground();
+            return;
+        }
+        try (Arena arena = Arena.ofConfined()) {
+            ObjC objc = ObjC.load();
+            MemorySegment sharedApp = objc.sharedApplication(arena);
+            if (!sharedApp.equals(MemorySegment.NULL)) {
+                objc.msgSendVoidBool(sharedApp, arena.allocateFrom("activateIgnoringOtherApps:"), true);
+            }
+        } catch (Throwable ignored) {
+            // Best-effort foreground activation.
         }
     }
 
@@ -377,6 +465,8 @@ public final class WindowFocusHelper {
 
     private record ObjC(
             MethodHandle objcGetClass,
+            MethodHandle objectGetClass,
+            MethodHandle classReplaceMethod,
             MethodHandle selRegisterName,
             MethodHandle msgSendObj,
             MethodHandle msgSendInt,
@@ -402,6 +492,10 @@ public final class WindowFocusHelper {
             return new ObjC(
                     linker.downcallHandle(lookup.find("objc_getClass").orElseThrow(),
                             FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS)),
+                    linker.downcallHandle(lookup.find("object_getClass").orElseThrow(),
+                            FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS)),
+                    linker.downcallHandle(lookup.find("class_replaceMethod").orElseThrow(),
+                            FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS)),
                     linker.downcallHandle(lookup.find("sel_registerName").orElseThrow(),
                             FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS)),
                     linker.downcallHandle(msgSend,

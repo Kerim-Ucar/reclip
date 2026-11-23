@@ -22,6 +22,7 @@ import javafx.scene.control.ToggleButton;
 import javafx.scene.control.ToggleGroup;
 import javafx.scene.image.Image;
 import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -115,6 +116,15 @@ public class DashboardWindow {
         searchField.setPromptText("Search recent copies…");
         searchField.getStyleClass().add("chord-field");
         searchField.textProperty().addListener((obs, oldVal, newVal) -> updateResults(newVal));
+        searchField.setOnKeyPressed(event -> {
+            if (event.getCode() == KeyCode.DOWN && !historyList.getItems().isEmpty()) {
+                historyList.requestFocus();
+                if (historyList.getSelectionModel().isEmpty()) {
+                    historyList.getSelectionModel().selectFirst();
+                }
+                event.consume();
+            }
+        });
 
         historyList.setPlaceholder(new Label("No clipboard history yet."));
         historyList.getStyleClass().add("persisted-list");
@@ -126,6 +136,12 @@ public class DashboardWindow {
                     onEntrySelected.accept(selected);
                 }
                 event.consume();
+            } else if (event.getCode() == KeyCode.BACK_SPACE || event.getCode() == KeyCode.DELETE) {
+                ClipboardEntry selected = historyList.getSelectionModel().getSelectedItem();
+                if (selected != null) {
+                    historyService.deleteEntry(selected.id());
+                }
+                event.consume();
             }
         });
         VBox.setVgrow(historyList, Priority.ALWAYS);
@@ -133,11 +149,8 @@ public class DashboardWindow {
         recentView.getChildren().setAll(searchField, historyList);
         recentView.getStyleClass().addAll("settings-group", "settings-row");
 
-        StackPane contentStack = new StackPane(recentView, settingsPane);
+        StackPane contentStack = new StackPane(recentView);
         VBox.setVgrow(contentStack, Priority.ALWAYS);
-
-        settingsPane.setVisible(false);
-        settingsPane.setManaged(false);
 
         tabs.selectedToggleProperty().addListener((obs, oldToggle, newToggle) -> {
             if (newToggle == null) {
@@ -147,13 +160,12 @@ public class DashboardWindow {
             boolean showSettings = newToggle == settingsTab;
             if (showSettings) {
                 settingsPane.reload();
+                contentStack.getChildren().setAll(settingsPane);
+            } else {
+                contentStack.getChildren().setAll(recentView);
             }
-            recentView.setVisible(!showSettings);
-            recentView.setManaged(!showSettings);
             clearButton.setVisible(!showSettings);
             clearButton.setManaged(!showSettings);
-            settingsPane.setVisible(showSettings);
-            settingsPane.setManaged(showSettings);
         });
 
         VBox root = new VBox(12, header, contentStack);
@@ -161,6 +173,15 @@ public class DashboardWindow {
         root.setPadding(new Insets(16));
 
         Scene scene = new Scene(root, 460, 480);
+        scene.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
+            if (event.getCode() == KeyCode.ESCAPE && !isRecording()) {
+                stage.hide();
+                event.consume();
+            } else if (event.getCode() == KeyCode.F && event.isShortcutDown() && recentTab.isSelected()) {
+                searchField.requestFocus();
+                event.consume();
+            }
+        });
         URL stylesheet = getClass().getResource("/styles/settings.css");
         if (stylesheet != null) {
             scene.getStylesheets().add(stylesheet.toExternalForm());
@@ -178,8 +199,11 @@ public class DashboardWindow {
             if (settingsTab.isSelected()) {
                 settingsPane.reload();
             }
+            stage.setOpacity(0);
             stage.show();
             WindowFocusHelper.applyDarkTitleBar();
+            WindowFocusHelper.activateAppOnly();
+            stage.setOpacity(1);
             stage.toFront();
             stage.requestFocus();
         };
@@ -187,6 +211,14 @@ public class DashboardWindow {
             showTask.run();
         } else {
             Platform.runLater(showTask);
+        }
+    }
+
+    public void hide() {
+        if (Platform.isFxApplicationThread()) {
+            stage.hide();
+        } else {
+            Platform.runLater(stage::hide);
         }
     }
 

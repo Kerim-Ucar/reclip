@@ -113,6 +113,14 @@ public class PickerWindow {
                     moveSelection(1);
                     event.consume();
                 }
+                case HOME -> {
+                    selectIndex(0);
+                    event.consume();
+                }
+                case END -> {
+                    selectIndex(historyList.getItems().size() - 1);
+                    event.consume();
+                }
                 case ENTER -> {
                     selectFocusedEntry();
                     event.consume();
@@ -279,10 +287,14 @@ public class PickerWindow {
         try {
             Robot robot = new Robot();
             Point2D cursor = robot.getMousePosition();
-            List<Screen> screens = Screen.getScreensForRectangle(cursor.getX(), cursor.getY(), 1, 1);
-            Rectangle2D bounds = screens.isEmpty()
-                    ? Screen.getPrimary().getVisualBounds()
-                    : screens.getFirst().getVisualBounds();
+            List<Rectangle2D> allBounds = Screen.getScreens().stream()
+                    .map(Screen::getVisualBounds)
+                    .toList();
+            Rectangle2D bounds = WindowPositioner.selectTargetScreenBounds(
+                    cursor.getX(),
+                    cursor.getY(),
+                    allBounds,
+                    Screen.getPrimary().getVisualBounds());
             double height = stage.getHeight() > 0 ? stage.getHeight() : DEFAULT_HEIGHT;
             Point2D position = WindowPositioner.positionNearCursor(
                     cursor.getX(),
@@ -395,9 +407,13 @@ public class PickerWindow {
     private void moveSelection(int delta) {
         int count = historyList.getItems().size();
         int nextIndex = nextSelectionIndex(historyList.getSelectionModel().getSelectedIndex(), count, delta);
-        if (nextIndex >= 0) {
-            historyList.getSelectionModel().select(nextIndex);
-            historyList.scrollTo(nextIndex);
+        selectIndex(nextIndex);
+    }
+
+    private void selectIndex(int index) {
+        if (index >= 0 && index < historyList.getItems().size()) {
+            historyList.getSelectionModel().select(index);
+            historyList.scrollTo(index);
         }
     }
 

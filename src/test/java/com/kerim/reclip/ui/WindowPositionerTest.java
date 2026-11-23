@@ -4,9 +4,22 @@ import javafx.geometry.Point2D;
 import javafx.geometry.Rectangle2D;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class WindowPositionerTest {
+
+    @Test
+    void selectsExactMonitorOrNearestMonitorAcrossMultiMonitorLayout() {
+        Rectangle2D primary = new Rectangle2D(0, 0, 1920, 1080);
+        Rectangle2D secondary = new Rectangle2D(-1920, 0, 1920, 1080);
+        List<Rectangle2D> monitors = List.of(primary, secondary);
+
+        assertEquals(secondary, WindowPositioner.selectTargetScreenBounds(-500, 300, monitors, primary));
+        assertEquals(primary, WindowPositioner.selectTargetScreenBounds(500, 300, monitors, secondary));
+        assertEquals(secondary, WindowPositioner.selectTargetScreenBounds(-2000, 500, monitors, primary));
+    }
 
     @Test
     void positionsBottomRightOfCursorWhenItFits() {

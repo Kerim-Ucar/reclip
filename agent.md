@@ -97,7 +97,7 @@ Clipboard histories can contain passwords, authentication tokens, personal data,
 - [x] System tray/menu-bar controls and single-instance startup.
 - [x] Configurable shortcut, pinned entries, delete/clear history.
 - [x] Settings for monitoring pause and persistence mode.
-- [ ] Usable keyboard focus and multi-monitor positioning.
+- [x] Usable keyboard focus and multi-monitor positioning.
 
 ### Phase 3 — Polish and robustness
 - [ ] Optional auto-paste, opt-in and disabled by default.

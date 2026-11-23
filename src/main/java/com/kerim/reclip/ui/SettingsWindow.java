@@ -75,8 +75,11 @@ public class SettingsWindow {
     public void show() {
         Runnable showTask = () -> {
             settingsPane.reload();
+            stage.setOpacity(0);
             stage.show();
             WindowFocusHelper.applyDarkTitleBar();
+            WindowFocusHelper.activateAppOnly();
+            stage.setOpacity(1);
             stage.toFront();
             stage.requestFocus();
         };
