@@ -56,13 +56,22 @@ public class InMemoryHistoryRepository implements HistoryRepository {
         }
         String normalizedQuery = query.trim().toLowerCase(Locale.ROOT);
         return entriesById.values().stream()
-                .filter(entry -> entry.content().toLowerCase(Locale.ROOT).contains(normalizedQuery)
-                        || entry.label().toLowerCase(Locale.ROOT).contains(normalizedQuery))
+                .filter(entry -> matchesQuery(entry, normalizedQuery))
                 .sorted(Comparator
                         .comparing((ClipboardEntry entry) -> !entry.pinned())
                         .thenComparingInt(entry -> matchScore(entry.displayText(), normalizedQuery))
                         .thenComparing(ClipboardEntry::lastUsedAt, Comparator.reverseOrder()))
                 .toList();
+    }
+
+    private static boolean matchesQuery(ClipboardEntry entry, String normalizedQuery) {
+        if (entry.label().toLowerCase(Locale.ROOT).contains(normalizedQuery)) {
+            return true;
+        }
+        if (entry.contentType() == ContentType.IMAGE) {
+            return false;
+        }
+        return entry.content().toLowerCase(Locale.ROOT).contains(normalizedQuery);
     }
 
     @Override

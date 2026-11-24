@@ -204,6 +204,143 @@
     -fx-font-size: 12px;
 }
 
+.apple-checkbox {
+    -fx-text-fill: #F5F5F7;
+    -fx-font-size: 12.5px;
+    -fx-cursor: hand;
+}
+
+.apple-checkbox .box {
+    -fx-background-color: #1A1A1D;
+    -fx-border-color: rgba(255, 255, 255, 0.22);
+    -fx-border-width: 1;
+    -fx-background-radius: 5;
+    -fx-border-radius: 5;
+}
+
+.apple-checkbox:selected .box {
+    -fx-background-color: #0A84FF;
+    -fx-border-color: #0A84FF;
+}
+
+.apple-checkbox:selected .mark {
+    -fx-background-color: #FFFFFF;
+}
+
+.settings-scroll {
+    -fx-background-color: transparent;
+    -fx-background: transparent;
+    -fx-border-color: transparent;
+    -fx-padding: 0;
+}
+
+.settings-scroll > .viewport {
+    -fx-background-color: transparent;
+}
+
+.settings-scroll .scroll-bar:vertical,
+.persisted-list .scroll-bar:vertical {
+    -fx-background-color: transparent;
+    -fx-pref-width: 8;
+    -fx-padding: 2 1 2 1;
+}
+
+.settings-scroll .scroll-bar:vertical .track,
+.persisted-list .scroll-bar:vertical .track {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+}
+
+.settings-scroll .scroll-bar:vertical .thumb,
+.persisted-list .scroll-bar:vertical .thumb {
+    -fx-background-color: rgba(255, 255, 255, 0.22);
+    -fx-background-radius: 999;
+    -fx-background-insets: 0;
+}
+
+.settings-scroll .scroll-bar:vertical .thumb:hover,
+.persisted-list .scroll-bar:vertical .thumb:hover {
+    -fx-background-color: rgba(255, 255, 255, 0.38);
+}
+
+.settings-scroll .scroll-bar:vertical .thumb:pressed,
+.persisted-list .scroll-bar:vertical .thumb:pressed {
+    -fx-background-color: rgba(255, 255, 255, 0.50);
+}
+
+.settings-scroll .scroll-bar .increment-button,
+.settings-scroll .scroll-bar .decrement-button,
+.persisted-list .scroll-bar .increment-button,
+.persisted-list .scroll-bar .decrement-button {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+    -fx-pref-height: 0;
+    -fx-pref-width: 0;
+}
+
+.settings-scroll .scroll-bar .increment-arrow,
+.settings-scroll .scroll-bar .decrement-arrow,
+.persisted-list .scroll-bar .increment-arrow,
+.persisted-list .scroll-bar .decrement-arrow {
+    -fx-shape: "";
+    -fx-padding: 0;
+}
+
+.notice-banner {
+    -fx-background-color: rgba(255, 159, 10, 0.14);
+    -fx-border-color: rgba(255, 159, 10, 0.45);
+    -fx-border-width: 1;
+    -fx-background-radius: 10;
+    -fx-border-radius: 10;
+    -fx-padding: 8 10 8 10;
+}
+
+.notice-text {
+    -fx-text-fill: #FFD699;
+    -fx-font-size: 12px;
+}
+
+.permission-ok {
+    -fx-text-fill: #6EE787;
+    -fx-font-size: 11.5px;
+}
+
+.permission-warn {
+    -fx-text-fill: #FFB340;
+    -fx-font-size: 11.5px;
+}
+
+.compact-button {
+    -fx-background-color: rgba(255, 255, 255, 0.14);
+    -fx-text-fill: #F5F5F7;
+    -fx-border-color: rgba(255, 255, 255, 0.20);
+    -fx-border-width: 1;
+    -fx-background-radius: 999;
+    -fx-border-radius: 999;
+    -fx-padding: 3 10 3 10;
+    -fx-font-size: 11.5px;
+    -fx-cursor: hand;
+}
+
+.compact-button:hover {
+    -fx-background-color: rgba(255, 255, 255, 0.22);
+}
+
+.persisted-list .list-cell .entry-text {
+    -fx-text-fill: #F5F5F7;
+}
+
+.persisted-list .list-cell:filled:selected .entry-text {
+    -fx-text-fill: #FFFFFF;
+}
+
+.image-hover-caret {
+    -fx-text-fill: rgba(255, 255, 255, 0.72);
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-padding: 0 2 0 4;
+}
+
 .persisted-list {
     -fx-background-color: #1A1A1D;
     -fx-border-color: rgba(255, 255, 255, 0.12);

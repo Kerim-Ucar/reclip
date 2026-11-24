@@ -4,8 +4,12 @@ import com.kerim.reclip.app.ReclipApp;
 import com.kerim.reclip.config.AppSettings;
 import com.kerim.reclip.config.PersistedSnippet;
 import com.kerim.reclip.history.ClipboardEntry;
+import com.kerim.reclip.history.ContentType;
 import com.kerim.reclip.history.HistoryService;
 import com.kerim.reclip.platform.WindowFocusHelper;
+import com.kerim.reclip.platform.macos.MacOsPermissions;
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -34,6 +38,7 @@ import javafx.stage.Stage;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Consumer;
@@ -49,6 +54,10 @@ public class DashboardWindow {
     private final HistoryService historyService;
     private final Consumer<ClipboardEntry> onEntrySelected;
     private final SettingsPane settingsPane;
+    private final ImagePreviewSupport imagePreviewSupport = new ImagePreviewSupport();
+    private final Timeline countdownTimeline;
+    private volatile boolean maskPasswords = AppSettings.DEFAULT_MASK_PASSWORDS;
+    private volatile int passwordExpirySeconds = AppSettings.DEFAULT_PASSWORD_EXPIRY_SECONDS;
 
     private final TextField searchField = new TextField();
     private final ListView<ClipboardEntry> historyList = new ListView<>();
@@ -56,6 +65,9 @@ public class DashboardWindow {
     private final ToggleButton recentTab = new ToggleButton("Recent Copies");
     private final ToggleButton settingsTab = new ToggleButton("Settings");
     private final Button clearButton = new Button("Clear");
+    private final HBox noticeBanner = new HBox(8);
+    private final Label noticeLabel = new Label();
+    private final Button noticeActionButton = new Button("Accessibility Settings");
 
     public DashboardWindow(
             HistoryService historyService,
@@ -73,6 +85,14 @@ public class DashboardWindow {
                 onAddPersistedSnippet,
                 onRemovePersistedSnippet,
                 null);
+        this.countdownTimeline = new Timeline(new KeyFrame(
+                javafx.util.Duration.millis(250),
+                e -> {
+                    if (stage.isShowing()) {
+                        imagePreviewSupport.tickCountdowns(Instant.now());
+                    }
+                }));
+        this.countdownTimeline.setCycleCount(Timeline.INDEFINITE);
         configureStage();
         refresh();
     }
@@ -138,7 +158,7 @@ public class DashboardWindow {
                 event.consume();
             } else if (event.getCode() == KeyCode.BACK_SPACE || event.getCode() == KeyCode.DELETE) {
                 ClipboardEntry selected = historyList.getSelectionModel().getSelectedItem();
-                if (selected != null) {
+                if (selected != null && !selected.pinned()) {
                     historyService.deleteEntry(selected.id());
                 }
                 event.consume();
@@ -168,7 +188,7 @@ public class DashboardWindow {
             clearButton.setManaged(!showSettings);
         });
 
-        VBox root = new VBox(12, header, contentStack);
+        VBox root = new VBox(12, header, buildNoticeBanner(), contentStack);
         root.getStyleClass().add("settings-root");
         root.setPadding(new Insets(16));
 
@@ -189,6 +209,56 @@ public class DashboardWindow {
         stage.setScene(scene);
     }
 
+    private HBox buildNoticeBanner() {
+        noticeLabel.setWrapText(true);
+        noticeLabel.getStyleClass().add("notice-text");
+        HBox.setHgrow(noticeLabel, Priority.ALWAYS);
+
+        noticeActionButton.getStyleClass().add("compact-button");
+        noticeActionButton.setOnAction(e -> MacOsPermissions.openAccessibilitySettings());
+
+        Button dismissButton = new Button("Dismiss");
+        dismissButton.getStyleClass().add("compact-button");
+        dismissButton.setOnAction(e -> hideNotice());
+
+        noticeBanner.getChildren().setAll(noticeLabel, noticeActionButton, dismissButton);
+        noticeBanner.setAlignment(Pos.CENTER_LEFT);
+        noticeBanner.getStyleClass().add("notice-banner");
+        noticeBanner.setVisible(false);
+        noticeBanner.setManaged(false);
+        return noticeBanner;
+    }
+
+    /**
+     * Displays a non-blocking warning or permission guidance banner at the top of the panel.
+     *
+     * @param message                 user-facing message to display
+     * @param showAccessibilityButton whether to show a shortcut button to macOS Accessibility Settings
+     */
+    public void showNotice(String message, boolean showAccessibilityButton) {
+        if (message == null || message.isBlank()) {
+            return;
+        }
+        Runnable task = () -> {
+            noticeLabel.setText(message);
+            boolean showAction = showAccessibilityButton && MacOsPermissions.isMacOs();
+            noticeActionButton.setVisible(showAction);
+            noticeActionButton.setManaged(showAction);
+            noticeBanner.setVisible(true);
+            noticeBanner.setManaged(true);
+        };
+        if (Platform.isFxApplicationThread()) {
+            task.run();
+        } else {
+            Platform.runLater(task);
+        }
+    }
+
+    private void hideNotice() {
+        noticeBanner.setVisible(false);
+        noticeBanner.setManaged(false);
+    }
+
     public boolean isRecording() {
         return settingsPane.isRecording();
     }
@@ -204,6 +274,7 @@ public class DashboardWindow {
             }
             stage.setOpacity(0);
             stage.show();
+            countdownTimeline.play();
             WindowFocusHelper.applyDarkTitleBar();
             WindowFocusHelper.activateAppOnly();
             stage.setOpacity(1);
@@ -218,11 +289,22 @@ public class DashboardWindow {
     }
 
     public void hide() {
+        countdownTimeline.stop();
+        imagePreviewSupport.hide();
         if (Platform.isFxApplicationThread()) {
             stage.hide();
         } else {
             Platform.runLater(stage::hide);
         }
+    }
+
+    public void setMaskPasswords(boolean maskPasswords) {
+        this.maskPasswords = maskPasswords;
+        refresh();
+    }
+
+    public void setPasswordExpirySeconds(int passwordExpirySeconds) {
+        this.passwordExpirySeconds = Math.max(1, passwordExpirySeconds);
     }
 
     public void refresh() {
@@ -240,14 +322,28 @@ public class DashboardWindow {
 
     private ListCell<ClipboardEntry> createEntryCell() {
         ListCell<ClipboardEntry> cell = new ListCell<>() {
+            private final ImagePreviewSupport.EntryCellContent content = imagePreviewSupport.installOnCell(this);
+
             @Override
             protected void updateItem(ClipboardEntry item, boolean empty) {
                 super.updateItem(item, empty);
                 if (empty || item == null) {
+                    content.clear();
                     setText(null);
+                    setGraphic(null);
                 } else {
                     String prefix = item.pinned() ? "★ " : "";
-                    setText(prefix + PickerWindow.formatPreview(item.displayText()));
+                    String label = (item.sensitive() && maskPasswords)
+                            ? "Password"
+                            : PickerWindow.formatPreview(item.displayWithTypeBadge());
+                    content.update(
+                            item,
+                            prefix + label,
+                            item.contentType() == ContentType.IMAGE,
+                            isHover(),
+                            passwordExpirySeconds * 1000L);
+                    setText(null);
+                    setGraphic(content.root());
                 }
             }
         };
@@ -269,7 +365,12 @@ public class DashboardWindow {
             pinItem.setOnAction(e -> historyService.togglePinned(entry.id()));
 
             MenuItem deleteItem = new MenuItem("Delete");
-            deleteItem.setOnAction(e -> historyService.deleteEntry(entry.id()));
+            deleteItem.setDisable(entry.pinned());
+            deleteItem.setOnAction(e -> {
+                if (!entry.pinned()) {
+                    historyService.deleteEntry(entry.id());
+                }
+            });
 
             MenuItem clearItem = new MenuItem("Clear Unpinned");
             clearItem.setOnAction(e -> historyService.clearUnpinned());

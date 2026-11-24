@@ -37,6 +37,7 @@ public final class TrayController implements AutoCloseable {
     private final Runnable onShowRequested;
     private final Runnable onSettingsRequested;
     private final Consumer<Boolean> onPauseToggled;
+    private final Runnable onRefreshRequested;
     private final Runnable onClearHistory;
     private final Runnable onQuitRequested;
     private final boolean initialPaused;
@@ -79,9 +80,31 @@ public final class TrayController implements AutoCloseable {
             Runnable onClearHistory,
             Runnable onQuitRequested,
             boolean initialPaused) {
+        this(
+                onShowRequested,
+                onSettingsRequested,
+                onPauseToggled,
+                () -> {},
+                onClearHistory,
+                onQuitRequested,
+                initialPaused);
+    }
+
+    /**
+     * Creates a tray controller with callbacks, refresh action, and initial monitoring pause state.
+     */
+    public TrayController(
+            Runnable onShowRequested,
+            Runnable onSettingsRequested,
+            Consumer<Boolean> onPauseToggled,
+            Runnable onRefreshRequested,
+            Runnable onClearHistory,
+            Runnable onQuitRequested,
+            boolean initialPaused) {
         this.onShowRequested = Objects.requireNonNull(onShowRequested, "onShowRequested must not be null");
         this.onSettingsRequested = Objects.requireNonNull(onSettingsRequested, "onSettingsRequested must not be null");
         this.onPauseToggled = Objects.requireNonNull(onPauseToggled, "onPauseToggled must not be null");
+        this.onRefreshRequested = Objects.requireNonNull(onRefreshRequested, "onRefreshRequested must not be null");
         this.onClearHistory = Objects.requireNonNull(onClearHistory, "onClearHistory must not be null");
         this.onQuitRequested = Objects.requireNonNull(onQuitRequested, "onQuitRequested must not be null");
         this.initialPaused = initialPaused;
@@ -95,7 +118,12 @@ public final class TrayController implements AutoCloseable {
     public boolean install() {
         if (isMacOs()) {
             MacOsStatusBarTray tray = new MacOsStatusBarTray(
-                    onShowRequested, onSettingsRequested, onPauseToggled, onClearHistory, onQuitRequested);
+                    onShowRequested,
+                    onSettingsRequested,
+                    onPauseToggled,
+                    onRefreshRequested,
+                    onClearHistory,
+                    onQuitRequested);
             if (tray.install()) {
                 this.macOsTray = tray;
                 return true;
@@ -121,6 +149,9 @@ public final class TrayController implements AutoCloseable {
             CheckboxMenuItem pauseItem = new CheckboxMenuItem("Pause Monitoring", initialPaused);
             pauseItem.addItemListener(e -> onPauseToggled.accept(pauseItem.getState()));
 
+            MenuItem refreshItem = new MenuItem("Refresh");
+            refreshItem.addActionListener(e -> onRefreshRequested.run());
+
             MenuItem clearItem = new MenuItem("Clear History");
             clearItem.addActionListener(e -> onClearHistory.run());
 
@@ -131,6 +162,7 @@ public final class TrayController implements AutoCloseable {
             menu.add(settingsItem);
             menu.addSeparator();
             menu.add(pauseItem);
+            menu.add(refreshItem);
             menu.add(clearItem);
             menu.addSeparator();
             menu.add(quitItem);

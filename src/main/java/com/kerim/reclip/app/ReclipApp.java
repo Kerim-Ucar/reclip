@@ -4,6 +4,7 @@ import com.kerim.reclip.clipboard.AwtClipboardProvider;
 import com.kerim.reclip.clipboard.ClipboardObserver;
 import com.kerim.reclip.clipboard.ClipboardProvider;
 import com.kerim.reclip.config.AppSettings;
+import com.kerim.reclip.config.LocalEncryption;
 import com.kerim.reclip.config.PersistedSnippet;
 import com.kerim.reclip.config.PropertiesSettingsRepository;
 import com.kerim.reclip.config.SettingsRepository;
@@ -16,7 +17,11 @@ import com.kerim.reclip.hotkey.JNativeHookShortcutService;
 import com.kerim.reclip.hotkey.OutsideClickDetector;
 import com.kerim.reclip.hotkey.ShortcutRegistrationResult;
 import com.kerim.reclip.ipc.ReclipIpcServer;
+import com.kerim.reclip.platform.PasteService;
 import com.kerim.reclip.platform.WindowFocusHelper;
+import com.kerim.reclip.platform.macos.MacOsPasteService;
+import com.kerim.reclip.platform.macos.MacOsPasteboard;
+import com.kerim.reclip.platform.macos.MacOsPermissions;
 import com.kerim.reclip.platform.windows.WindowsWindowHelper;
 import com.kerim.reclip.ui.DashboardWindow;
 import com.kerim.reclip.ui.PickerWindow;
@@ -31,10 +36,15 @@ import javafx.stage.StageStyle;
 import java.awt.Desktop;
 import java.awt.desktop.AppReopenedListener;
 import java.io.IOException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -46,7 +56,10 @@ public class ReclipApp extends Application {
 
     private final AtomicBoolean cleanedUp = new AtomicBoolean(false);
     private SingleInstanceLock instanceLock;
+    private AwtClipboardProvider clipboardProvider;
     private ClipboardObserver clipboardObserver;
+    private ExecutorService clipboardWriteExecutor;
+    private ScheduledExecutorService expiryExecutor;
     private GlobalShortcutService shortcutService;
     private OutsideClickDetector outsideClickDetector;
     private TrayController trayController;
@@ -70,13 +83,16 @@ public class ReclipApp extends Application {
         Platform.setImplicitExit(false);
         WindowFocusHelper.configureBackgroundApp();
 
+        LocalEncryption localEncryption = LocalEncryption.defaultEncryptor();
         SettingsRepository settingsRepository = new PropertiesSettingsRepository(
-                PropertiesSettingsRepository.defaultSettingsPath());
+                PropertiesSettingsRepository.defaultSettingsPath(),
+                localEncryption);
         currentSettings = settingsRepository.load();
 
         FileHistoryRepository historyRepository = new FileHistoryRepository(
                 FileHistoryRepository.defaultHistoryPath(),
-                currentSettings.persistHistory());
+                currentSettings.persistHistory(),
+                localEncryption);
         HistoryService historyService = new HistoryService(
                 historyRepository,
                 currentSettings.maxHistoryEntries());
@@ -85,29 +101,77 @@ public class ReclipApp extends Application {
             ClipboardEntry entry = historyService.recordText(snippet.content(), startupTime);
             historyRepository.save(entry.withPinned(true).withLabel(snippet.label()));
         }
-        ClipboardProvider clipboardProvider = new AwtClipboardProvider();
-        clipboardObserver = new ClipboardObserver(
+        clipboardProvider = new AwtClipboardProvider();
+        clipboardObserver = ClipboardObserver.forTypedContent(
                 clipboardProvider,
                 ClipboardObserver.DEFAULT_POLL_INTERVAL,
-                event -> historyService.recordText(event.text(), event.observedAt()));
+                event -> {
+                    if (MacOsPasteboard.isFrontmostAppExcluded(currentSettings.excludedApps())) {
+                        return;
+                    }
+                    historyService.recordEntry(
+                            event.contentType(),
+                            event.content(),
+                            event.displayLabel(),
+                            event.observedAt(),
+                            event.sensitive(),
+                            Duration.ofSeconds(currentSettings.passwordExpirySeconds()));
+                });
         clipboardObserver.setPaused(currentSettings.monitoringPaused());
+        historyService.addDeleteListener(clipboardObserver::clearLastObserved);
+
+        DashboardWindow[] dashboardHolder = new DashboardWindow[1];
+        clipboardWriteExecutor = Executors.newSingleThreadExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "reclip-clipboard-writer");
+            thread.setDaemon(true);
+            return thread;
+        });
+        java.util.function.Consumer<ClipboardEntry> writeEntryToClipboard = entry -> {
+            clipboardObserver.markSelfWritten(entry.contentType(), entry.content());
+            Runnable writeTask = () -> {
+                if (clipboardProvider.writeContent(entry.contentType(), entry.content())) {
+                    if (entry.sensitive() && currentSettings.oneTimePasswords()) {
+                        historyService.deleteEntry(entry.id());
+                    }
+                } else {
+                    DashboardWindow dw = dashboardHolder[0];
+                    if (dw != null) {
+                        dw.showNotice(
+                                "Unable to write to the system clipboard. Another app may be holding the clipboard lock.",
+                                false);
+                    }
+                }
+            };
+            if (Platform.isFxApplicationThread()) {
+                clipboardWriteExecutor.execute(writeTask);
+            } else {
+                writeTask.run();
+            }
+        };
 
         outsideClickDetector = new OutsideClickDetector();
+        PasteService pasteService = new MacOsPasteService();
         Stage pickerStage = createPickerStage(primaryStage);
         PickerWindow pickerWindow = new PickerWindow(
                 pickerStage,
                 historyService,
-                entry -> {
-                    clipboardObserver.markSelfWritten(entry.content());
-                    clipboardProvider.writeText(entry.content());
-                },
-                outsideClickDetector);
+                writeEntryToClipboard,
+                outsideClickDetector,
+                pasteService);
         pickerWindow.setMaxVisibleEntries(currentSettings.visibleCopies());
+        pickerWindow.setAutoPasteEnabled(currentSettings.autoPaste());
+        pickerWindow.setMaskPasswords(currentSettings.maskPasswords());
+        pickerWindow.setPasswordExpirySeconds(currentSettings.passwordExpirySeconds());
+        pickerWindow.setOnPasteError(message -> {
+            DashboardWindow dw = dashboardHolder[0];
+            if (dw != null) {
+                dw.showNotice(message, true);
+            }
+        });
         historyService.addChangeListener(pickerWindow::refresh);
 
         shortcutService = new JNativeHookShortcutService();
         SettingsWindow[] settingsWindowHolder = new SettingsWindow[1];
-        DashboardWindow[] dashboardHolder = new DashboardWindow[1];
         Runnable togglePickerIfNotRecording = () -> {
             SettingsWindow sw = settingsWindowHolder[0];
             DashboardWindow dw = dashboardHolder[0];
@@ -120,13 +184,27 @@ public class ReclipApp extends Application {
             }
         };
 
-        SettingsPane.SettingsApplyHandler onSettingsApplied = (newShortcut, visibleCopies) -> {
+        SettingsPane.SettingsApplyHandler onSettingsApplied = (
+                newShortcut, visibleCopies, autoPaste, excludedApps, maskPasswords, expirySeconds, oneTimePasswords) -> {
             ShortcutRegistrationResult result = shortcutService.register(newShortcut, togglePickerIfNotRecording);
             if (result.registered()) {
                 currentSettings = currentSettings
                         .withShortcut(newShortcut)
-                        .withVisibleCopies(visibleCopies);
+                        .withVisibleCopies(visibleCopies)
+                        .withAutoPaste(autoPaste)
+                        .withExcludedApps(excludedApps)
+                        .withMaskPasswords(maskPasswords)
+                        .withPasswordExpirySeconds(expirySeconds)
+                        .withOneTimePasswords(oneTimePasswords);
                 pickerWindow.setMaxVisibleEntries(visibleCopies);
+                pickerWindow.setAutoPasteEnabled(autoPaste);
+                pickerWindow.setMaskPasswords(maskPasswords);
+                pickerWindow.setPasswordExpirySeconds(expirySeconds);
+                DashboardWindow dw = dashboardHolder[0];
+                if (dw != null) {
+                    dw.setMaskPasswords(maskPasswords);
+                    dw.setPasswordExpirySeconds(expirySeconds);
+                }
                 settingsRepository.save(currentSettings);
             }
             return result;
@@ -160,16 +238,24 @@ public class ReclipApp extends Application {
 
         DashboardWindow dashboardWindow = new DashboardWindow(
                 historyService,
-                entry -> {
-                    clipboardObserver.markSelfWritten(entry.content());
-                    clipboardProvider.writeText(entry.content());
-                },
+                writeEntryToClipboard,
                 () -> currentSettings,
                 onSettingsApplied,
                 onAddSnippet,
                 onRemoveSnippet);
         dashboardHolder[0] = dashboardWindow;
+        dashboardWindow.setMaskPasswords(currentSettings.maskPasswords());
+        dashboardWindow.setPasswordExpirySeconds(currentSettings.passwordExpirySeconds());
         historyService.addChangeListener(dashboardWindow::refresh);
+
+        expiryExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "reclip-sensitive-expiry");
+            thread.setDaemon(true);
+            return thread;
+        });
+        expiryExecutor.scheduleAtFixedRate(
+                () -> historyService.purgeExpired(Instant.now()),
+                1, 1, TimeUnit.SECONDS);
 
         trayController = new TrayController(
                 dashboardWindow::show,
@@ -177,12 +263,27 @@ public class ReclipApp extends Application {
                 paused -> {
                     clipboardObserver.setPaused(paused);
                     currentSettings = currentSettings.withMonitoringPaused(paused);
-                    settingsRepository.save(currentSettings);
+                    try {
+                        settingsRepository.save(currentSettings);
+                    } catch (RuntimeException e) {
+                        dashboardWindow.showNotice("Unable to save monitoring preference: " + e.getMessage(), false);
+                    }
+                },
+                () -> {
+                    Instant refreshTime = Instant.now();
+                    for (PersistedSnippet snippet : currentSettings.persistedSnippets()) {
+                        ClipboardEntry entry = historyService.recordText(snippet.content(), refreshTime);
+                        historyRepository.save(entry.withPinned(true).withLabel(snippet.label()));
+                    }
+                    pickerWindow.refresh();
+                    dashboardWindow.refresh();
                 },
                 historyService::clearUnpinned,
                 () -> Platform.runLater(Platform::exit),
                 currentSettings.monitoringPaused());
-        trayController.install();
+        if (!trayController.install()) {
+            System.err.println("System tray / menu-bar icon is unavailable on this desktop.");
+        }
 
         ipcServer = new ReclipIpcServer(
                 ReclipIpcServer.defaultSocketPath(),
@@ -205,13 +306,23 @@ public class ReclipApp extends Application {
             event.consume();
             pickerWindow.hide();
         });
+        clipboardObserver.ignoreInitialClipboard();
         clipboardObserver.start();
 
         ShortcutRegistrationResult registration = shortcutService.register(
                 currentSettings.shortcut(),
                 togglePickerIfNotRecording);
         if (!registration.registered()) {
-            registration.errorMessage().ifPresent(System.err::println);
+            String message = registration.errorMessage().orElse("Unable to register global shortcut.");
+            System.err.println(message);
+            dashboardWindow.showNotice(message, true);
+        } else if (currentSettings.autoPaste()
+                && MacOsPermissions.isMacOs()
+                && !MacOsPermissions.isAccessibilityTrusted()) {
+            dashboardWindow.showNotice(
+                    "Auto-paste is enabled, but Accessibility permission is not granted yet. "
+                            + MacOsPermissions.accessibilityGuidance(),
+                    true);
         }
 
         dashboardWindow.show();
@@ -242,6 +353,15 @@ public class ReclipApp extends Application {
         }
         if (clipboardObserver != null) {
             clipboardObserver.close();
+        }
+        if (clipboardWriteExecutor != null) {
+            clipboardWriteExecutor.shutdownNow();
+        }
+        if (expiryExecutor != null) {
+            expiryExecutor.shutdownNow();
+        }
+        if (clipboardProvider != null) {
+            clipboardProvider.clearImageCache();
         }
         if (instanceLock != null) {
             instanceLock.close();

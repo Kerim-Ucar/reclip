@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PropertiesSettingsRepositoryTest {
@@ -18,7 +19,13 @@ class PropertiesSettingsRepositoryTest {
     void returnsDefaultsWhenFileDoesNotExist(@TempDir Path tempDir) {
         PropertiesSettingsRepository repo = new PropertiesSettingsRepository(tempDir.resolve("missing.properties"));
 
-        assertEquals(AppSettings.defaults(), repo.load());
+        AppSettings defaults = AppSettings.defaults();
+        assertFalse(defaults.autoPaste());
+        assertTrue(defaults.maskPasswords());
+        assertTrue(defaults.oneTimePasswords());
+        assertEquals(60, defaults.passwordExpirySeconds());
+        assertEquals(AppSettings.DEFAULT_EXCLUDED_APPS, defaults.excludedApps());
+        assertEquals(defaults, repo.load());
     }
 
     @Test
@@ -33,7 +40,12 @@ class PropertiesSettingsRepositoryTest {
                 50,
                 7,
                 true,
-                List.of(new PersistedSnippet("roblox id", "123456789"), new PersistedSnippet("", "plain")));
+                List.of(new PersistedSnippet("roblox id", "123456789"), new PersistedSnippet("", "plain")),
+                true,
+                List.of("1Password", "Bitwarden"),
+                false,
+                90,
+                false);
 
         repo.save(expected);
         AppSettings loaded = repo.load();

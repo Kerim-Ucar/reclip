@@ -40,6 +40,7 @@ public final class MacOsStatusBarTray implements AutoCloseable {
     private final Runnable onShowRequested;
     private final Runnable onSettingsRequested;
     private final Consumer<Boolean> onPauseToggled;
+    private final Runnable onRefreshRequested;
     private final Runnable onClearHistory;
     private final Runnable onQuitRequested;
 
@@ -54,9 +55,20 @@ public final class MacOsStatusBarTray implements AutoCloseable {
             Consumer<Boolean> onPauseToggled,
             Runnable onClearHistory,
             Runnable onQuitRequested) {
+        this(onShowRequested, onSettingsRequested, onPauseToggled, () -> {}, onClearHistory, onQuitRequested);
+    }
+
+    public MacOsStatusBarTray(
+            Runnable onShowRequested,
+            Runnable onSettingsRequested,
+            Consumer<Boolean> onPauseToggled,
+            Runnable onRefreshRequested,
+            Runnable onClearHistory,
+            Runnable onQuitRequested) {
         this.onShowRequested = Objects.requireNonNull(onShowRequested, "onShowRequested must not be null");
         this.onSettingsRequested = Objects.requireNonNull(onSettingsRequested, "onSettingsRequested must not be null");
         this.onPauseToggled = Objects.requireNonNull(onPauseToggled, "onPauseToggled must not be null");
+        this.onRefreshRequested = Objects.requireNonNull(onRefreshRequested, "onRefreshRequested must not be null");
         this.onClearHistory = Objects.requireNonNull(onClearHistory, "onClearHistory must not be null");
         this.onQuitRequested = Objects.requireNonNull(onQuitRequested, "onQuitRequested must not be null");
     }
@@ -147,6 +159,7 @@ public final class MacOsStatusBarTray implements AutoCloseable {
         addMenuItem(objc, arena, menu, "Settings...", "onSettings:", target);
         addSeparator(objc, arena, menu);
         this.pauseMenuItem = addMenuItem(objc, arena, menu, "Pause Monitoring", "onTogglePause:", target);
+        addMenuItem(objc, arena, menu, "Refresh", "onRefresh:", target);
         addMenuItem(objc, arena, menu, "Clear History", "onClear:", target);
         addSeparator(objc, arena, menu);
         addMenuItem(objc, arena, menu, "Quit " + ReclipApp.APP_NAME, "onQuit:", target);
@@ -195,6 +208,7 @@ public final class MacOsStatusBarTray implements AutoCloseable {
         registerAction(objc, arena, cls, "onShow:", lookup, linker, callbackDesc, typeEncoding, "handleShow");
         registerAction(objc, arena, cls, "onSettings:", lookup, linker, callbackDesc, typeEncoding, "handleSettings");
         registerAction(objc, arena, cls, "onTogglePause:", lookup, linker, callbackDesc, typeEncoding, "handleTogglePause");
+        registerAction(objc, arena, cls, "onRefresh:", lookup, linker, callbackDesc, typeEncoding, "handleRefresh");
         registerAction(objc, arena, cls, "onClear:", lookup, linker, callbackDesc, typeEncoding, "handleClear");
         registerAction(objc, arena, cls, "onQuit:", lookup, linker, callbackDesc, typeEncoding, "handleQuit");
 
@@ -247,6 +261,11 @@ public final class MacOsStatusBarTray implements AutoCloseable {
                 // Best-effort checkmark update.
             }
         }
+    }
+
+    @SuppressWarnings("unused")
+    private void handleRefresh(MemorySegment self, MemorySegment sel, MemorySegment sender) {
+        onRefreshRequested.run();
     }
 
     @SuppressWarnings("unused")

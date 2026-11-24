@@ -1,10 +1,13 @@
 package com.kerim.reclip.clipboard;
 
+import com.kerim.reclip.history.ContentType;
+
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
@@ -24,7 +27,8 @@ public class ClipboardObserver implements AutoCloseable {
 
     private final ClipboardProvider clipboardProvider;
     private final Duration pollInterval;
-    private final Consumer<ClipboardTextEvent> listener;
+    private final Consumer<ClipboardTextEvent> textListener;
+    private final Consumer<ClipboardContentEvent> contentListener;
     private final Clock clock;
     private final ScheduledExecutorService executor;
     private final boolean ownsExecutor;
@@ -45,7 +49,23 @@ public class ClipboardObserver implements AutoCloseable {
             ClipboardProvider clipboardProvider,
             Duration pollInterval,
             Consumer<ClipboardTextEvent> listener) {
-        this(clipboardProvider, pollInterval, listener, Clock.systemUTC(), createDefaultExecutor(), true);
+        this(clipboardProvider, pollInterval, listener, null, Clock.systemUTC(), createDefaultExecutor(), true);
+    }
+
+    /**
+     * Creates a typed clipboard observer supporting text, images, and files.
+     *
+     * @param clipboardProvider the clipboard provider to poll
+     * @param pollInterval      the delay between polls; must be positive
+     * @param contentListener   callback invoked when new typed content is observed
+     */
+    public static ClipboardObserver forTypedContent(
+            ClipboardProvider clipboardProvider,
+            Duration pollInterval,
+            Consumer<ClipboardContentEvent> contentListener) {
+        Objects.requireNonNull(contentListener, "contentListener must not be null");
+        return new ClipboardObserver(
+                clipboardProvider, pollInterval, null, contentListener, Clock.systemUTC(), createDefaultExecutor(), true);
     }
 
     ClipboardObserver(
@@ -54,13 +74,14 @@ public class ClipboardObserver implements AutoCloseable {
             Consumer<ClipboardTextEvent> listener,
             Clock clock,
             ScheduledExecutorService executor) {
-        this(clipboardProvider, pollInterval, listener, clock, executor, false);
+        this(clipboardProvider, pollInterval, listener, null, clock, executor, false);
     }
 
     private ClipboardObserver(
             ClipboardProvider clipboardProvider,
             Duration pollInterval,
-            Consumer<ClipboardTextEvent> listener,
+            Consumer<ClipboardTextEvent> textListener,
+            Consumer<ClipboardContentEvent> contentListener,
             Clock clock,
             ScheduledExecutorService executor,
             boolean ownsExecutor) {
@@ -69,7 +90,11 @@ public class ClipboardObserver implements AutoCloseable {
         if (pollInterval.isZero() || pollInterval.isNegative()) {
             throw new IllegalArgumentException("pollInterval must be positive");
         }
-        this.listener = Objects.requireNonNull(listener, "listener must not be null");
+        if (textListener == null && contentListener == null) {
+            throw new IllegalArgumentException("At least one listener must be provided");
+        }
+        this.textListener = textListener;
+        this.contentListener = contentListener;
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
         this.executor = Objects.requireNonNull(executor, "executor must not be null");
         this.ownsExecutor = ownsExecutor;
@@ -127,9 +152,45 @@ public class ClipboardObserver implements AutoCloseable {
      * @param text the text written by the application
      */
     public void markSelfWritten(String text) {
-        Objects.requireNonNull(text, "text must not be null");
+        markSelfWritten(ContentType.TEXT, text);
+    }
+
+    /**
+     * Records typed content written by the application itself so the next poll does not
+     * re-emit it as a new external clipboard change.
+     *
+     * @param contentType the content type written by the application
+     * @param content     the serialized content written by the application
+     */
+    public void markSelfWritten(ContentType contentType, String content) {
+        Objects.requireNonNull(contentType, "contentType must not be null");
+        Objects.requireNonNull(content, "content must not be null");
         synchronized (stateLock) {
-            lastObservedFingerprint = fingerprint(text);
+            lastObservedFingerprint = fingerprint(contentType, content);
+        }
+    }
+
+    /**
+     * Clears the last observed fingerprint so re-copying a previously deleted item
+     * is recognized as a new clipboard event.
+     */
+    public void clearLastObserved() {
+        synchronized (stateLock) {
+            lastObservedFingerprint = null;
+        }
+    }
+
+    /**
+     * Seeds the observer with whatever is currently on the clipboard so pre-existing
+     * clipboard contents (such as a secret copied before Reclip launched) are not
+     * captured on startup.
+     */
+    public void ignoreInitialClipboard() {
+        try {
+            clipboardProvider.readContent().ifPresent(payload ->
+                    markSelfWritten(payload.contentType(), payload.content()));
+        } catch (RuntimeException ignored) {
+            // Best-effort initial priming.
         }
     }
 
@@ -158,16 +219,12 @@ public class ClipboardObserver implements AutoCloseable {
         if (paused) {
             return;
         }
-        Optional<String> current = clipboardProvider.readText();
+        Optional<ClipboardPayload> current = clipboardProvider.readContent();
         if (current.isEmpty()) {
             return;
         }
-        String text = current.get();
-        if (text.isEmpty()) {
-            return;
-        }
-
-        String currentFingerprint = fingerprint(text);
+        ClipboardPayload payload = current.get();
+        String currentFingerprint = fingerprint(payload.contentType(), payload.content());
         synchronized (stateLock) {
             if (currentFingerprint.equals(lastObservedFingerprint)) {
                 return;
@@ -175,7 +232,18 @@ public class ClipboardObserver implements AutoCloseable {
             lastObservedFingerprint = currentFingerprint;
         }
 
-        listener.accept(new ClipboardTextEvent(text, clock.instant()));
+        Instant now = clock.instant();
+        if (contentListener != null) {
+            contentListener.accept(new ClipboardContentEvent(
+                    payload.contentType(),
+                    payload.content(),
+                    payload.displayLabel(),
+                    now,
+                    payload.sensitive()));
+        }
+        if (textListener != null && payload.contentType() == ContentType.TEXT) {
+            textListener.accept(new ClipboardTextEvent(payload.content(), now));
+        }
     }
 
     private void pollSafely() {
@@ -186,10 +254,12 @@ public class ClipboardObserver implements AutoCloseable {
         }
     }
 
-    private static String fingerprint(String text) {
+    private static String fingerprint(ContentType contentType, String content) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(text.getBytes(StandardCharsets.UTF_8));
+            digest.update(contentType.name().getBytes(StandardCharsets.UTF_8));
+            digest.update((byte) ':');
+            byte[] hash = digest.digest(content.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(hash);
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 algorithm not available", e);
