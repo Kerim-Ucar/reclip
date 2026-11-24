@@ -190,7 +190,7 @@ public class ReclipApp extends Application {
             DashboardWindow dw = dashboardHolder[0];
             boolean recording = (sw != null && sw.isRecording()) || (dw != null && dw.isRecording());
             if (!recording) {
-                if (dw != null) {
+                if (dw != null && !dw.isSettingsActive()) {
                     dw.hide();
                 }
                 pickerWindow.toggle();

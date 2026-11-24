@@ -42,6 +42,7 @@ test {
     jvmArgs '--enable-native-access=ALL-UNNAMED'
 }
 
+def appBundleVersion = '1.1.0'
 def runtimeModules = 'java.base,java.desktop,java.logging,jdk.jfr'
 def jvmBaseOptions = [
         '--enable-native-access=ALL-UNNAMED',
@@ -108,7 +109,7 @@ tasks.register('packageMacApp', Exec) {
                 jpackageBin.absolutePath,
                 '--type', 'app-image',
                 '--name', 'Reclip',
-                '--app-version', '1.0.0',
+                '--app-version', appBundleVersion,
                 '--input', layout.buildDirectory.dir('jpackage-input').get().asFile.absolutePath,
                 '--runtime-image', layout.buildDirectory.dir('mac-runtime').get().asFile.absolutePath,
                 '--main-jar', tasks.named('jar').get().archiveFileName.get(),
@@ -180,7 +181,7 @@ tasks.register('packageMacDmg', Exec) {
         commandLine jpackageBin.absolutePath,
                 '--type', 'dmg',
                 '--name', 'Reclip',
-                '--app-version', '1.0.0',
+                '--app-version', appBundleVersion,
                 '--app-image', layout.buildDirectory.dir('dist/Reclip.app').get().asFile.absolutePath,
                 '--icon', layout.buildDirectory.file('icon/Reclip.icns').get().asFile.absolutePath,
                 '--dest', layout.buildDirectory.dir('dist').get().asFile.absolutePath
@@ -275,7 +276,7 @@ tasks.register('packageWinApp', Exec) {
                 jpackageBin.absolutePath,
                 '--type', 'app-image',
                 '--name', 'Reclip',
-                '--app-version', '1.0.0',
+                '--app-version', appBundleVersion,
                 '--vendor', 'Reclip',
                 '--input', layout.buildDirectory.dir('jpackage-input').get().asFile.absolutePath,
                 '--runtime-image', layout.buildDirectory.dir('win-runtime').get().asFile.absolutePath,
@@ -366,10 +367,49 @@ tasks.register('ensureWixToolset') {
     }
 }
 
+tasks.register('prepareWinMsiResources') {
+    def resourceDir = layout.buildDirectory.dir('jpackage-win-resources')
+    outputs.dir(resourceDir)
+
+    doLast {
+        def outDir = resourceDir.get().asFile
+        delete outDir
+        outDir.mkdirs()
+
+        def extractTmp = new File(outDir, 'extract-tmp')
+        def jimageBin = new File(jdk25HomeProvider.get(), 'bin/jimage.exe')
+        def modulesFile = new File(jdk25HomeProvider.get(), 'lib/modules')
+        def extractProc = new ProcessBuilder(
+                jimageBin.absolutePath,
+                'extract',
+                '--include', 'regex:.*jpackage/internal/resources/main\\.wxs',
+                '--dir', extractTmp.absolutePath,
+                modulesFile.absolutePath
+        ).inheritIO().start()
+        if (extractProc.waitFor() != 0) {
+            throw new GradleException('Failed to extract jpackage main.wxs template via jimage')
+        }
+
+        def extractedWxs = new File(extractTmp, 'jdk.jpackage/jdk/jpackage/internal/resources/main.wxs')
+        if (!extractedWxs.isFile()) {
+            throw new GradleException("Extracted main.wxs not found at ${extractedWxs}")
+        }
+        String content = extractedWxs.getText('UTF-8')
+        String patched = content
+                .replace('Id="$(var.JpProductCode)"', 'Id="*"')
+                .replace('IncludeMaximum="$(var.JpUpgradeVersionOnlyDetectUpgrade)"', 'IncludeMaximum="yes"')
+        if (patched == content) {
+            throw new GradleException('Failed to patch jpackage main.wxs for same-version upgrades')
+        }
+        new File(outDir, 'main.wxs').setText(patched, 'UTF-8')
+        delete extractTmp
+    }
+}
+
 tasks.register('packageWinExe', Exec) {
-    dependsOn tasks.named('packageWinApp'), tasks.named('ensureWixToolset')
+    dependsOn tasks.named('packageWinApp'), tasks.named('ensureWixToolset'), tasks.named('prepareWinMsiResources')
     doFirst {
-        def exeOut = layout.buildDirectory.file('dist/Reclip-1.0.0.exe').get().asFile
+        def exeOut = layout.buildDirectory.file("dist/Reclip-${appBundleVersion}.exe").get().asFile
         if (exeOut.exists()) {
             delete exeOut
         }
@@ -382,14 +422,16 @@ tasks.register('packageWinExe', Exec) {
         commandLine jpackageBin.absolutePath,
                 '--type', 'exe',
                 '--name', 'Reclip',
-                '--app-version', '1.0.0',
+                '--app-version', appBundleVersion,
                 '--vendor', 'Reclip',
                 '--app-image', layout.buildDirectory.dir('dist/Reclip').get().asFile.absolutePath,
                 '--icon', layout.buildDirectory.file('icon/Reclip.ico').get().asFile.absolutePath,
+                '--resource-dir', layout.buildDirectory.dir('jpackage-win-resources').get().asFile.absolutePath,
                 '--win-upgrade-uuid', '8f4c9b2a-51d7-4e63-9c12-7a3b8d90e1f4',
                 '--win-per-user-install',
                 '--win-dir-chooser',
                 '--win-menu',
+                '--win-menu-group', 'Reclip',
                 '--win-shortcut',
                 '--dest', layout.buildDirectory.dir('dist').get().asFile.absolutePath
     }

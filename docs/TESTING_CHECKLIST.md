@@ -51,5 +51,5 @@ Use this checklist to verify OS-level behavior on real hardware before tagging a
 - [ ] Copy from an excluded app (e.g. `1Password`, `KeePassXC`, or a process added to **Excluded apps**): verify copy is ignored, and concealed formats (`ExcludeClipboardContentFromMonitorProcessing` / `CanIncludeInClipboardHistory=0`) are masked and auto-expired.
 - [ ] Verify Settings persistence in `%USERPROFILE%\.reclip\settings.properties` (AES-256-GCM encrypted) and DPAPI-protected `%USERPROFILE%\.reclip\.key` with owner-only NTFS ACL.
 - [ ] Build `.\gradlew.bat packageWinApp` and launch `build\dist\Reclip\Reclip.exe`: verify startup, tray, shortcut, auto-paste, and clean exit.
-- [ ] Build `.\gradlew.bat packageWinExe`: verify `build\dist\Reclip-1.0.0.exe` installer is generated.
+- [ ] Build `.\gradlew.bat packageWinExe`: verify `build\dist\Reclip-1.1.0.exe` installer is generated.
 - [ ] Optional: verify Chrome native host (`extensions\chrome\install-windows-host.ps1`).
