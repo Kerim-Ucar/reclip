@@ -44,7 +44,7 @@ final class ImagePreviewSupport {
     private static final double MAX_PREVIEW_WIDTH = 220.0;
     private static final double MAX_PREVIEW_HEIGHT = 160.0;
     private static final double POPUP_GAP = 8.0;
-    private static final int MAX_CACHED_IMAGES = 12;
+    private static final int MAX_CACHED_IMAGES = 6;
 
     private final Popup previewPopup = new Popup();
     private final ImageView previewImageView = new ImageView();
@@ -148,6 +148,11 @@ final class ImagePreviewSupport {
         if (previewPopup.isShowing()) {
             previewPopup.hide();
         }
+    }
+
+    void clearCache() {
+        previewImageView.setImage(null);
+        imageCache.clear();
     }
 
     private void showPreviewFor(ListCell<ClipboardEntry> cell, ClipboardEntry entry) {

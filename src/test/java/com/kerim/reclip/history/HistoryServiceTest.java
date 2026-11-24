@@ -2,12 +2,16 @@ package com.kerim.reclip.history;
 
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class HistoryServiceTest {
 
@@ -122,6 +126,28 @@ class HistoryServiceTest {
         assertEquals(true, service.deleteEntry(second.id()));
         assertEquals(false, service.deleteEntry(second.id()));
         assertEquals(1, service.listAll().size());
+    }
+
+    @Test
+    void tracksEarliestSensitiveExpiryAndClearsAfterPurge() {
+        HistoryService service = new HistoryService(new InMemoryHistoryRepository());
+        service.recordText("plain-entry", T1);
+        assertFalse(service.hasSensitiveEntries());
+        assertEquals(Optional.empty(), service.nextSensitiveExpiry());
+
+        service.recordEntry(ContentType.TEXT, "secret-later", "", T2, true, Duration.ofSeconds(60));
+        service.recordEntry(ContentType.TEXT, "secret-sooner", "", T1, true, Duration.ofSeconds(30));
+
+        assertTrue(service.hasSensitiveEntries());
+        assertEquals(Optional.of(T1.plusSeconds(30)), service.nextSensitiveExpiry());
+
+        assertEquals(1, service.purgeExpired(T1.plusSeconds(30)));
+        assertTrue(service.hasSensitiveEntries());
+        assertEquals(Optional.of(T2.plusSeconds(60)), service.nextSensitiveExpiry());
+
+        assertEquals(1, service.purgeExpired(T2.plusSeconds(60)));
+        assertFalse(service.hasSensitiveEntries());
+        assertEquals(Optional.empty(), service.nextSensitiveExpiry());
     }
 
     @Test

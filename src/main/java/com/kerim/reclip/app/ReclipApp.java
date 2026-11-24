@@ -15,6 +15,7 @@ import com.kerim.reclip.history.HistoryService;
 import com.kerim.reclip.hotkey.GlobalShortcutService;
 import com.kerim.reclip.hotkey.JNativeHookShortcutService;
 import com.kerim.reclip.hotkey.OutsideClickDetector;
+import com.kerim.reclip.hotkey.Shortcut;
 import com.kerim.reclip.hotkey.ShortcutRegistrationResult;
 import com.kerim.reclip.ipc.ReclipIpcServer;
 import com.kerim.reclip.platform.PasteService;
@@ -36,14 +37,18 @@ import javafx.stage.StageStyle;
 import java.awt.Desktop;
 import java.awt.desktop.AppReopenedListener;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -55,11 +60,13 @@ public class ReclipApp extends Application {
     public static final String APP_NAME = "Reclip";
 
     private final AtomicBoolean cleanedUp = new AtomicBoolean(false);
+    private final Object expiryLock = new Object();
     private SingleInstanceLock instanceLock;
     private AwtClipboardProvider clipboardProvider;
     private ClipboardObserver clipboardObserver;
     private ExecutorService clipboardWriteExecutor;
     private ScheduledExecutorService expiryExecutor;
+    private ScheduledFuture<?> pendingExpiryTask;
     private GlobalShortcutService shortcutService;
     private OutsideClickDetector outsideClickDetector;
     private TrayController trayController;
@@ -72,6 +79,10 @@ public class ReclipApp extends Application {
 
     @Override
     public void start(Stage primaryStage) {
+        if (Boolean.getBoolean("reclip.aot.train")) {
+            runAotTraining(primaryStage);
+            return;
+        }
         Optional<SingleInstanceLock> acquiredLock = SingleInstanceLock.tryAcquireDefault();
         if (acquiredLock.isEmpty()) {
             ReclipIpcServer.sendCommand(ReclipIpcServer.defaultSocketPath(), "SHOW_PANEL");
@@ -229,12 +240,23 @@ public class ReclipApp extends Application {
             }
         };
 
-        SettingsWindow settingsWindow = new SettingsWindow(
-                () -> currentSettings,
-                onSettingsApplied,
-                onAddSnippet,
-                onRemoveSnippet);
-        settingsWindowHolder[0] = settingsWindow;
+        Runnable showSettingsWindow = () -> {
+            Runnable showTask = () -> {
+                if (settingsWindowHolder[0] == null) {
+                    settingsWindowHolder[0] = new SettingsWindow(
+                            () -> currentSettings,
+                            onSettingsApplied,
+                            onAddSnippet,
+                            onRemoveSnippet);
+                }
+                settingsWindowHolder[0].show();
+            };
+            if (Platform.isFxApplicationThread()) {
+                showTask.run();
+            } else {
+                Platform.runLater(showTask);
+            }
+        };
 
         DashboardWindow dashboardWindow = new DashboardWindow(
                 historyService,
@@ -247,19 +269,12 @@ public class ReclipApp extends Application {
         dashboardWindow.setMaskPasswords(currentSettings.maskPasswords());
         dashboardWindow.setPasswordExpirySeconds(currentSettings.passwordExpirySeconds());
         historyService.addChangeListener(dashboardWindow::refresh);
-
-        expiryExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
-            Thread thread = new Thread(runnable, "reclip-sensitive-expiry");
-            thread.setDaemon(true);
-            return thread;
-        });
-        expiryExecutor.scheduleAtFixedRate(
-                () -> historyService.purgeExpired(Instant.now()),
-                1, 1, TimeUnit.SECONDS);
+        historyService.addChangeListener(() -> rescheduleSensitiveExpiry(historyService));
+        rescheduleSensitiveExpiry(historyService);
 
         trayController = new TrayController(
                 dashboardWindow::show,
-                settingsWindow::show,
+                showSettingsWindow,
                 paused -> {
                     clipboardObserver.setPaused(paused);
                     currentSettings = currentSettings.withMonitoringPaused(paused);
@@ -316,11 +331,10 @@ public class ReclipApp extends Application {
             String message = registration.errorMessage().orElse("Unable to register global shortcut.");
             System.err.println(message);
             dashboardWindow.showNotice(message, true);
-        } else if (currentSettings.autoPaste()
-                && MacOsPermissions.isMacOs()
+        } else if (MacOsPermissions.isMacOs()
                 && !MacOsPermissions.isAccessibilityTrusted()) {
             dashboardWindow.showNotice(
-                    "Auto-paste is enabled, but Accessibility permission is not granted yet. "
+                    "Permissions required for global shortcuts & auto-paste. "
                             + MacOsPermissions.accessibilityGuidance(),
                     true);
         }
@@ -357,14 +371,119 @@ public class ReclipApp extends Application {
         if (clipboardWriteExecutor != null) {
             clipboardWriteExecutor.shutdownNow();
         }
-        if (expiryExecutor != null) {
-            expiryExecutor.shutdownNow();
+        synchronized (expiryLock) {
+            if (pendingExpiryTask != null) {
+                pendingExpiryTask.cancel(false);
+                pendingExpiryTask = null;
+            }
+            if (expiryExecutor != null) {
+                expiryExecutor.shutdownNow();
+                expiryExecutor = null;
+            }
         }
         if (clipboardProvider != null) {
             clipboardProvider.clearImageCache();
         }
         if (instanceLock != null) {
             instanceLock.close();
+        }
+    }
+
+    private void rescheduleSensitiveExpiry(HistoryService historyService) {
+        synchronized (expiryLock) {
+            if (pendingExpiryTask != null) {
+                pendingExpiryTask.cancel(false);
+                pendingExpiryTask = null;
+            }
+            if (cleanedUp.get()) {
+                return;
+            }
+            Optional<Instant> nextExpiry = historyService.nextSensitiveExpiry();
+            if (nextExpiry.isEmpty()) {
+                return;
+            }
+            if (expiryExecutor == null) {
+                expiryExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
+                    Thread thread = new Thread(runnable, "reclip-sensitive-expiry");
+                    thread.setDaemon(true);
+                    return thread;
+                });
+            }
+            long delayMs = Math.max(25L, Duration.between(Instant.now(), nextExpiry.get()).toMillis() + 25L);
+            pendingExpiryTask = expiryExecutor.schedule(() -> {
+                historyService.purgeExpired(Instant.now());
+                rescheduleSensitiveExpiry(historyService);
+            }, delayMs, TimeUnit.MILLISECONDS);
+        }
+    }
+
+    private void runAotTraining(Stage primaryStage) {
+        Path tempDir = null;
+        try {
+            tempDir = Files.createTempDirectory("reclip-aot-train-");
+            LocalEncryption encryption = LocalEncryption.withKey(LocalEncryption.generateAesKey());
+            PropertiesSettingsRepository settingsRepo = new PropertiesSettingsRepository(
+                    tempDir.resolve("settings.properties"), encryption);
+            AppSettings initialSettings = settingsRepo.load();
+            settingsRepo.save(initialSettings);
+            AppSettings loadedSettings = settingsRepo.load();
+
+            FileHistoryRepository historyRepo = new FileHistoryRepository(
+                    tempDir.resolve("history.txt"), true, encryption);
+            HistoryService historyService = new HistoryService(historyRepo, loadedSettings.maxHistoryEntries());
+            Instant now = Instant.now();
+            ClipboardEntry textEntry = historyService.recordText("Reclip AOT warmup", now);
+            historyService.recordEntry(
+                    ContentType.TEXT, "aot-secret-sample", "", now, true, Duration.ofSeconds(60));
+            historyService.togglePinned(textEntry.id());
+            historyService.search("Reclip");
+            historyService.purgeExpired(now.plusSeconds(120));
+
+            Shortcut.defaultShortcut().format();
+
+            OutsideClickDetector detector = new OutsideClickDetector();
+            PasteService pasteService = new MacOsPasteService();
+            Stage pickerStage = createPickerStage(primaryStage);
+            PickerWindow pickerWindow = new PickerWindow(
+                    pickerStage, historyService, entry -> {}, detector, pasteService);
+            pickerWindow.refresh();
+            if (pickerStage.getScene() != null && pickerStage.getScene().getRoot() != null) {
+                pickerStage.getScene().getRoot().applyCss();
+                pickerStage.getScene().getRoot().layout();
+            }
+
+            DashboardWindow dashboardWindow = new DashboardWindow(
+                    historyService,
+                    entry -> {},
+                    () -> loadedSettings,
+                    (s, v, a, e, m, exp, otp) -> ShortcutRegistrationResult.success(),
+                    snippet -> {},
+                    snippet -> {});
+            dashboardWindow.refresh();
+
+            SettingsWindow settingsWindow = new SettingsWindow(
+                    () -> loadedSettings,
+                    (s, v, a, e, m, exp, otp) -> ShortcutRegistrationResult.success(),
+                    snippet -> {},
+                    snippet -> {});
+            settingsWindow.isRecording();
+
+            detector.close();
+        } catch (IOException | RuntimeException e) {
+            System.err.println("AOT training warning: " + e.getMessage());
+        } finally {
+            if (tempDir != null) {
+                try (var stream = Files.walk(tempDir)) {
+                    stream.sorted(Comparator.reverseOrder()).forEach(path -> {
+                        try {
+                            Files.deleteIfExists(path);
+                        } catch (IOException ignored) {
+                        }
+                    });
+                } catch (IOException ignored) {
+                }
+            }
+            Platform.runLater(Platform::exit);
         }
     }
 
