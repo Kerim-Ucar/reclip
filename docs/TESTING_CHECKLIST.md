@@ -45,8 +45,11 @@ Use this checklist to verify OS-level behavior on real hardware before tagging a
 - [ ] Click outside the picker on a high-DPI monitor: picker dismisses cleanly.
 - [ ] Lock screen (`Win+L`) or UAC prompt while holding a modifier, then unlock: shortcut does not get stuck.
 
-### Clipboard & Packaging
+### Clipboard, Privacy, Auto-Paste & Packaging
 - [ ] Copy text, an image (Snipping Tool), and files (File Explorer): verify capture, preview, and re-selection.
-- [ ] Verify Settings persistence in `%USERPROFILE%\.reclip\settings.properties` (including shortcut, copies shown, persisted texts).
-- [ ] Build `.\gradlew.bat packageWinApp` and launch `build\dist\Reclip\Reclip.exe`: verify startup, tray, shortcut, and clean exit.
+- [ ] Enable **Auto-paste** in Settings and click **Apply**: selecting an item in the picker hides the picker, restores focus to the previous app (e.g. Notepad, Terminal), and pastes (`Ctrl+V`).
+- [ ] Copy from an excluded app (e.g. `1Password`, `KeePassXC`, or a process added to **Excluded apps**): verify copy is ignored, and concealed formats (`ExcludeClipboardContentFromMonitorProcessing` / `CanIncludeInClipboardHistory=0`) are masked and auto-expired.
+- [ ] Verify Settings persistence in `%USERPROFILE%\.reclip\settings.properties` (AES-256-GCM encrypted) and DPAPI-protected `%USERPROFILE%\.reclip\.key` with owner-only NTFS ACL.
+- [ ] Build `.\gradlew.bat packageWinApp` and launch `build\dist\Reclip\Reclip.exe`: verify startup, tray, shortcut, auto-paste, and clean exit.
+- [ ] Build `.\gradlew.bat packageWinExe`: verify `build\dist\Reclip-1.0.0.exe` installer is generated.
 - [ ] Optional: verify Chrome native host (`extensions\chrome\install-windows-host.ps1`).

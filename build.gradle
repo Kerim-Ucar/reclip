@@ -42,8 +42,8 @@ test {
     jvmArgs '--enable-native-access=ALL-UNNAMED'
 }
 
-def macRuntimeModules = 'java.base,java.desktop,java.logging,jdk.jfr'
-def macJvmBaseOptions = [
+def runtimeModules = 'java.base,java.desktop,java.logging,jdk.jfr'
+def jvmBaseOptions = [
         '--enable-native-access=ALL-UNNAMED',
         '-XX:+UseSerialGC',
         '-Xms8m',
@@ -70,7 +70,7 @@ tasks.register('buildMacRuntime', Exec) {
         delete runtimeDir.get().asFile
         def jlinkBin = new File(jdk25HomeProvider.get(), 'bin/jlink')
         commandLine jlinkBin.absolutePath,
-                '--add-modules', macRuntimeModules,
+                '--add-modules', runtimeModules,
                 '--strip-debug',
                 '--no-header-files',
                 '--no-man-pages',
@@ -116,7 +116,7 @@ tasks.register('packageMacApp', Exec) {
                 '--icon', icnsFile.absolutePath,
                 '--mac-package-identifier', 'com.kerim.reclip'
         ]
-        macJvmBaseOptions.each { opt ->
+        jvmBaseOptions.each { opt ->
             cmd.addAll(['--java-options', opt])
         }
         cmd.addAll([
@@ -148,7 +148,7 @@ tasks.register('packageMacApp', Exec) {
         }
 
         def trainCmd = [runtimeJava.absolutePath]
-        trainCmd.addAll(macJvmBaseOptions)
+        trainCmd.addAll(jvmBaseOptions)
         trainCmd.addAll([
                 '-Dreclip.aot.train=true',
                 "-XX:AOTCacheOutput=${aotFile.absolutePath}".toString(),
@@ -246,53 +246,151 @@ tasks.register('generateWinIcon') {
     }
 }
 
+tasks.register('buildWinRuntime', Exec) {
+    def runtimeDir = layout.buildDirectory.dir('win-runtime')
+    outputs.dir(runtimeDir)
+    doFirst {
+        delete runtimeDir.get().asFile
+        def jlinkBin = new File(jdk25HomeProvider.get(), 'bin/jlink.exe')
+        commandLine jlinkBin.absolutePath,
+                '--add-modules', runtimeModules,
+                '--strip-debug',
+                '--no-header-files',
+                '--no-man-pages',
+                '--output', runtimeDir.get().asFile.absolutePath
+    }
+}
+
 tasks.register('packageWinApp', Exec) {
-    dependsOn tasks.named('prepareJpackageInput'), tasks.named('generateWinIcon')
+    dependsOn tasks.named('prepareJpackageInput'), tasks.named('generateWinIcon'), tasks.named('buildWinRuntime')
     doFirst {
         def appOut = layout.buildDirectory.dir('dist/Reclip').get().asFile
         if (appOut.exists()) {
             delete appOut
         }
         layout.buildDirectory.dir('dist').get().asFile.mkdirs()
+
+        def jpackageBin = new File(jdk25HomeProvider.get(), 'bin/jpackage.exe')
+        def cmd = [
+                jpackageBin.absolutePath,
+                '--type', 'app-image',
+                '--name', 'Reclip',
+                '--app-version', '1.0.0',
+                '--vendor', 'Reclip',
+                '--input', layout.buildDirectory.dir('jpackage-input').get().asFile.absolutePath,
+                '--runtime-image', layout.buildDirectory.dir('win-runtime').get().asFile.absolutePath,
+                '--main-jar', tasks.named('jar').get().archiveFileName.get(),
+                '--main-class', 'com.kerim.reclip.app.Launcher',
+                '--icon', layout.buildDirectory.file('icon/Reclip.ico').get().asFile.absolutePath
+        ]
+        jvmBaseOptions.each { opt ->
+            cmd.addAll(['--java-options', opt])
+        }
+        cmd.addAll([
+                '--java-options', '-XX:AOTCache=$APPDIR/reclip.aot',
+                '--java-options', '-XX:AOTMode=auto',
+                '--dest', layout.buildDirectory.dir('dist').get().asFile.absolutePath
+        ])
+        commandLine cmd
     }
-    commandLine 'jpackage',
-            '--type', 'app-image',
-            '--name', 'Reclip',
-            '--app-version', '1.0.0',
-            '--vendor', 'Reclip',
-            '--input', layout.buildDirectory.dir('jpackage-input').get().asFile.absolutePath,
-            '--main-jar', tasks.named('jar').get().archiveFileName.get(),
-            '--main-class', 'com.kerim.reclip.app.Launcher',
-            '--icon', layout.buildDirectory.file('icon/Reclip.ico').get().asFile.absolutePath,
-            '--java-options', '--enable-native-access=ALL-UNNAMED',
-            '--dest', layout.buildDirectory.dir('dist').get().asFile.absolutePath
+
+    doLast {
+        def appOut = layout.buildDirectory.dir('dist/Reclip').get().asFile
+        def appDir = new File(appOut, 'app')
+        def cfgFile = new File(appDir, 'Reclip.cfg')
+        def aotFile = new File(appDir, 'reclip.aot')
+        def runtimeJava = layout.buildDirectory.file('win-runtime/bin/java.exe').get().asFile
+
+        def cpEntries = []
+        cfgFile.eachLine('UTF-8') { line ->
+            def trimmed = line.trim()
+            if (trimmed.startsWith('app.mainjar=')) {
+                cpEntries.add(trimmed.substring('app.mainjar='.length()).replace('$APPDIR', appDir.absolutePath))
+            } else if (trimmed.startsWith('app.classpath=')) {
+                cpEntries.add(trimmed.substring('app.classpath='.length()).replace('$APPDIR', appDir.absolutePath))
+            }
+        }
+        if (cpEntries.isEmpty()) {
+            throw new GradleException("Could not parse classpath entries from ${cfgFile}")
+        }
+
+        def trainCmd = [runtimeJava.absolutePath]
+        trainCmd.addAll(jvmBaseOptions)
+        trainCmd.addAll([
+                '-Dreclip.aot.train=true',
+                "-XX:AOTCacheOutput=${aotFile.absolutePath}".toString(),
+                '-cp', cpEntries.join(File.pathSeparator),
+                'com.kerim.reclip.app.Launcher'
+        ])
+        def trainResult = new ProcessBuilder(trainCmd.collect { it.toString() }).inheritIO().start().waitFor()
+        if (trainResult != 0 || !aotFile.isFile()) {
+            throw new GradleException("JDK 25 AOT cache generation failed (exit=${trainResult}, fileExists=${aotFile.isFile()})")
+        }
+    }
 }
 
-tasks.register('packageWinExe', Exec) {
-    dependsOn tasks.named('packageWinApp')
-    doFirst {
-        def hasWix = ['wix.exe', 'candle.exe'].any { tool ->
+tasks.register('ensureWixToolset') {
+    def wixCacheDir = new File(gradle.gradleUserHomeDir, 'caches/reclip-wix/wix314')
+    outputs.dir(wixCacheDir)
+
+    doLast {
+        def onPath = ['wix.exe', 'candle.exe'].any { tool ->
             System.getenv('PATH')?.split(File.pathSeparator)?.any { dir ->
                 dir && new File(dir, tool).isFile()
             }
         }
-        if (!hasWix) {
-            throw new GradleException(
-                    'WiX Toolset is required by jpackage to build a .exe installer. ' +
-                    'Install WiX (`dotnet tool install --global wix` or `winget install WixToolset.WixToolset`), ' +
-                    'or use `./gradlew packageWinApp` to build the standalone build/dist/Reclip/Reclip.exe app image.')
+        if (onPath || new File(wixCacheDir, 'candle.exe').isFile()) {
+            return
         }
+        wixCacheDir.mkdirs()
+        def localBuildWix = layout.buildDirectory.dir('tools/wix').get().asFile
+        if (new File(localBuildWix, 'candle.exe').isFile()) {
+            project.copy {
+                from localBuildWix
+                into wixCacheDir
+            }
+            return
+        }
+        def zipFile = new File(wixCacheDir, 'wix314-binaries.zip')
+        logger.lifecycle('Downloading portable WiX Toolset 3.14.1 for jpackage Windows installer...')
+        new URI('https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip')
+                .toURL()
+                .withInputStream { input ->
+                    java.nio.file.Files.copy(input, zipFile.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                }
+        project.copy {
+            from zipTree(zipFile)
+            into wixCacheDir
+        }
+        zipFile.delete()
     }
-    commandLine 'jpackage',
-            '--type', 'exe',
-            '--name', 'Reclip',
-            '--app-version', '1.0.0',
-            '--vendor', 'Reclip',
-            '--app-image', layout.buildDirectory.dir('dist/Reclip').get().asFile.absolutePath,
-            '--icon', layout.buildDirectory.file('icon/Reclip.ico').get().asFile.absolutePath,
-            '--win-per-user-install',
-            '--win-dir-chooser',
-            '--win-menu',
-            '--win-shortcut',
-            '--dest', layout.buildDirectory.dir('dist').get().asFile.absolutePath
+}
+
+tasks.register('packageWinExe', Exec) {
+    dependsOn tasks.named('packageWinApp'), tasks.named('ensureWixToolset')
+    doFirst {
+        def exeOut = layout.buildDirectory.file('dist/Reclip-1.0.0.exe').get().asFile
+        if (exeOut.exists()) {
+            delete exeOut
+        }
+        def wixCacheDir = new File(gradle.gradleUserHomeDir, 'caches/reclip-wix/wix314')
+        if (wixCacheDir.isDirectory()) {
+            def currentPath = System.getenv('PATH') ?: ''
+            environment 'PATH', "${wixCacheDir.absolutePath}${File.pathSeparator}${currentPath}"
+        }
+        def jpackageBin = new File(jdk25HomeProvider.get(), 'bin/jpackage.exe')
+        commandLine jpackageBin.absolutePath,
+                '--type', 'exe',
+                '--name', 'Reclip',
+                '--app-version', '1.0.0',
+                '--vendor', 'Reclip',
+                '--app-image', layout.buildDirectory.dir('dist/Reclip').get().asFile.absolutePath,
+                '--icon', layout.buildDirectory.file('icon/Reclip.ico').get().asFile.absolutePath,
+                '--win-upgrade-uuid', '8f4c9b2a-51d7-4e63-9c12-7a3b8d90e1f4',
+                '--win-per-user-install',
+                '--win-dir-chooser',
+                '--win-menu',
+                '--win-shortcut',
+                '--dest', layout.buildDirectory.dir('dist').get().asFile.absolutePath
+    }
 }

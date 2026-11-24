@@ -2,6 +2,7 @@ package com.kerim.reclip.clipboard;
 
 import com.kerim.reclip.history.ContentType;
 import com.kerim.reclip.platform.macos.MacOsPasteboard;
+import com.kerim.reclip.platform.windows.WindowsClipboard;
 
 import javax.imageio.ImageIO;
 import java.awt.Graphics2D;
@@ -45,6 +46,7 @@ public class AwtClipboardProvider implements ClipboardProvider {
     private final Path imageCacheDir;
     private final boolean systemClipboard;
     private long lastMacOsChangeCount = Long.MIN_VALUE;
+    private long lastWindowsSequence = Long.MIN_VALUE;
 
     /**
      * Creates a provider using the default system clipboard and a session temp image cache.
@@ -143,6 +145,8 @@ public class AwtClipboardProvider implements ClipboardProvider {
         boolean sensitive = false;
         long currentMacOsCount = Long.MIN_VALUE;
         boolean hasMacOsCount = false;
+        long currentWindowsSeq = Long.MIN_VALUE;
+        boolean hasWindowsSeq = false;
         if (systemClipboard) {
             var changeCount = MacOsPasteboard.changeCount();
             if (changeCount.isPresent()) {
@@ -151,8 +155,20 @@ public class AwtClipboardProvider implements ClipboardProvider {
                     return Optional.empty();
                 }
                 hasMacOsCount = true;
+            } else {
+                var winSeq = WindowsClipboard.sequenceNumber();
+                if (winSeq.isPresent()) {
+                    currentWindowsSeq = winSeq.getAsLong();
+                    if (currentWindowsSeq == lastWindowsSequence) {
+                        return Optional.empty();
+                    }
+                    hasWindowsSeq = true;
+                }
             }
-            sensitive = MacOsPasteboard.hasConcealedContent() || MacOsPasteboard.isPasswordManagerFrontmost();
+            sensitive = MacOsPasteboard.hasConcealedContent()
+                    || MacOsPasteboard.isPasswordManagerFrontmost()
+                    || WindowsClipboard.hasConcealedContent()
+                    || WindowsClipboard.isPasswordManagerFrontmost();
         }
         for (int attempt = 1; attempt <= READ_MAX_ATTEMPTS; attempt++) {
             try {
@@ -163,6 +179,9 @@ public class AwtClipboardProvider implements ClipboardProvider {
                         if (hasMacOsCount) {
                             lastMacOsChangeCount = currentMacOsCount;
                         }
+                        if (hasWindowsSeq) {
+                            lastWindowsSequence = currentWindowsSeq;
+                        }
                         return Optional.of(filesPayload.get().withSensitive(sensitive));
                     }
                 }
@@ -171,6 +190,9 @@ public class AwtClipboardProvider implements ClipboardProvider {
                     if (data instanceof String text && !text.isEmpty()) {
                         if (hasMacOsCount) {
                             lastMacOsChangeCount = currentMacOsCount;
+                        }
+                        if (hasWindowsSeq) {
+                            lastWindowsSequence = currentWindowsSeq;
                         }
                         return Optional.of(new ClipboardPayload(ContentType.TEXT, text, "", sensitive));
                     }
@@ -181,6 +203,9 @@ public class AwtClipboardProvider implements ClipboardProvider {
                     if (imagePayload.isPresent()) {
                         if (hasMacOsCount) {
                             lastMacOsChangeCount = currentMacOsCount;
+                        }
+                        if (hasWindowsSeq) {
+                            lastWindowsSequence = currentWindowsSeq;
                         }
                         return Optional.of(imagePayload.get().withSensitive(sensitive));
                     }
@@ -196,6 +221,9 @@ public class AwtClipboardProvider implements ClipboardProvider {
                 }
                 if (hasMacOsCount) {
                     lastMacOsChangeCount = currentMacOsCount;
+                }
+                if (hasWindowsSeq) {
+                    lastWindowsSequence = currentWindowsSeq;
                 }
                 return Optional.empty();
             } catch (IllegalStateException e) {

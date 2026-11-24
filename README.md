@@ -16,8 +16,9 @@ A local-first, privacy-focused clipboard history manager built with **Java 25** 
 - **Floating Cursor Picker**: Opens right near your mouse cursor across multiple monitors using a configurable global shortcut (`Ctrl + Shift + Space` by default).
   - Navigate with `Up` / `Down` / `Home` / `End`, copy with `Enter` or click, dismiss with `Esc` or clicking outside, delete with `BackSpace` / `Delete`, and pin/unpin with `Cmd+P` (`Ctrl+P`) or right-click.
   - **Image Hover Preview**: Hovering over an `[Image]` entry reveals a `›` caret and opens a scaled-down preview popover without stealing focus.
-- **Optional Auto-Paste (macOS, opt-in)**: Disabled by default; when enabled in Settings (with Accessibility permission), selecting an item in the picker restores focus to your previous app and automatically pastes (`Cmd+V`).
+- **Optional Auto-Paste (macOS & Windows, opt-in)**: Disabled by default; when enabled in Settings, selecting an item in the picker restores focus to your previous app and automatically pastes (`Cmd+V` on macOS with Accessibility permission, `Ctrl+V` on Windows via `SendInput`).
 - **Actionable Permission Guidance**: Displays live macOS Accessibility status in Settings with **Open Settings** and **Re-check** controls, plus non-blocking warning banners if shortcuts or auto-paste lack permissions.
+- **Privacy & Excluded Apps (macOS & Windows)**: Ignores concealed clipboard secrets and password managers (e.g. `1Password`, `Bitwarden`, `KeePassXC`, macOS Passwords/Keychain) and supports configurable **Excluded apps** and expiring/masked/one-time password entries.
 - **Main Dashboard & Settings**:
   - Runs as a single-instance menu-bar / system-tray app with quick access to recent copies and scrollable settings.
   - **Recent Copies** tab with live search (`Cmd+F` / `Ctrl+F`), keyboard navigation, and right-click actions (`Copy`, `Pin`/`Unpin`, `Delete`, `Clear Unpinned`).
@@ -28,10 +29,10 @@ A local-first, privacy-focused clipboard history manager built with **Java 25** 
   - **Chrome Extension** (`extensions/chrome/`): Adds **Open Reclip Clipboard** to Chrome's right-click menu and toolbar.
   - **macOS Services** (`extensions/macos/`): Adds **Open Reclip Clipboard** to the macOS right-click **Services** menu.
 
-## Future Features
+## Roadmap & Integrations
 
-- **Windows Auto-Paste**: Opt-in `Ctrl+V` simulation on Windows (currently implemented on macOS).
-- **Windows App Exclusion Rules**: Per-app exclusion filtering on Windows (currently implemented on macOS).
+- **Chrome Extension** (`extensions/chrome/`): Right-click **Open Reclip Clipboard** integration on macOS and Windows.
+- **macOS Services** (`extensions/macos/`): Right-click **Services → Open Reclip Clipboard** integration on macOS.
 
 ## Architecture
 
@@ -77,10 +78,10 @@ Download **[Reclip-1.0.0.dmg](https://github.com/Kerim-Ucar/reclip/releases)**, 
 # Run the application
 .\gradlew.bat run
 
-# Build self-contained build\dist\Reclip\Reclip.exe app image
+# Build self-contained build\dist\Reclip\Reclip.exe app image (with trimmed jlink runtime & JDK 25 AOT cache)
 .\gradlew.bat packageWinApp
 
-# Build per-user Windows .exe installer (requires WiX Toolset on PATH)
+# Build build\dist\Reclip-1.0.0.exe per-user installer (auto-fetches portable WiX 3.14 if needed)
 .\gradlew.bat packageWinExe
 ```
 
@@ -97,13 +98,13 @@ See [docs/TESTING_CHECKLIST.md](docs/TESTING_CHECKLIST.md) for the manual verifi
 
 - **Local-first**: No telemetry, analytics, cloud sync, or network calls.
 - **In-memory history**: Normal clipboard history is kept in memory only and cleared when you quit (session image cache files are deleted on exit).
-- **Concealed & excluded apps (macOS)**: Automatically ignores `org.nspasteboard.ConcealedType` / `TransientType` secrets from password managers, plus any user-configured **Excluded apps** in Settings.
-- **Encrypted local storage**: `~/.reclip/settings.properties` and optional `history.dat` are encrypted at rest with **AES-256-GCM** using a key stored in the **macOS Login Keychain** (with `0600` key-file fallback on non-Keychain systems). Use **Pause Monitoring** before copying sensitive data on unsupported platforms.
+- **Concealed & excluded apps (macOS & Windows)**: Automatically detects concealed/transient secrets (`org.nspasteboard.ConcealedType` / `TransientType` on macOS; `ExcludeClipboardContentFromMonitorProcessing` / `CanIncludeInClipboardHistory=0` on Windows) and password managers, plus any user-configured **Excluded apps** in Settings.
+- **Encrypted local storage**: `~/.reclip/settings.properties` and optional `history.dat` are encrypted at rest with **AES-256-GCM** using a key stored in the **macOS Login Keychain**, protected by **Windows DPAPI (`CryptProtectData`)** with owner-only NTFS ACLs on Windows, or stored in a `0600` key file on other platforms.
 
 ## Platform Status
 
 - **macOS (`aarch64`)**: Built and tested on macOS with Java 25 and JavaFX 25.
-- **Windows 11 (`x86_64`)**: Built and tested on Windows 11 with Java 25 and JavaFX 25 (system tray, global shortcuts, DPI-aware cursor picker, dark DWM title bars, foreground focus restoration, and `jpackage` `Reclip.exe` app image).
+- **Windows 10 / 11 (`x86_64`)**: Built and tested on Windows 11 with Java 25 and JavaFX 25 (system tray, global shortcuts, DPI-aware cursor picker, dark DWM title bars, foreground focus restoration, `Ctrl+V` auto-paste, O(1) sequence polling, concealed/excluded app filtering, DPAPI key protection, trimmed `jlink` + AOT `Reclip.exe`, and `Reclip-1.0.0.exe` installer).
 
 ## License
 

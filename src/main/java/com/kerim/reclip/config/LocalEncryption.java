@@ -1,6 +1,7 @@
 package com.kerim.reclip.config;
 
 import com.kerim.reclip.platform.macos.MacOsPermissions;
+import com.kerim.reclip.platform.windows.WindowsWindowHelper;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
@@ -8,31 +9,47 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import java.io.IOException;
+import java.lang.foreign.Arena;
+import java.lang.foreign.FunctionDescriptor;
+import java.lang.foreign.Linker;
+import java.lang.foreign.MemorySegment;
+import java.lang.foreign.SymbolLookup;
+import java.lang.foreign.ValueLayout;
+import java.lang.invoke.MethodHandle;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.AclEntry;
+import java.nio.file.attribute.AclEntryPermission;
+import java.nio.file.attribute.AclEntryType;
+import java.nio.file.attribute.AclFileAttributeView;
 import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.UserPrincipal;
 import java.security.GeneralSecurityException;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
 /**
  * AES-256-GCM encryption helper for local settings and persisted clipboard history.
- * On macOS, the 256-bit key is stored in the user's Login Keychain; on other platforms
- * (or if Keychain is unavailable), it falls back to an owner-only ({@code 0600}) key file.
+ * On macOS, the 256-bit key is stored in the user's Login Keychain; on Windows, it is
+ * protected using Windows DPAPI ({@code CryptProtectData}) with an owner-only NTFS ACL;
+ * on other platforms, it falls back to an owner-only ({@code 0600}) key file.
  */
 public final class LocalEncryption {
 
     private static final String HEADER = "RECLIP_ENC_V1:";
+    private static final String DPAPI_KEY_HEADER = "RECLIP_DPAPI_V1:";
     private static final String CIPHER_ALGORITHM = "AES/GCM/NoPadding";
     private static final int KEY_BITS = 256;
     private static final int IV_BYTES = 12;
     private static final int TAG_BITS = 128;
+    private static final int CRYPTPROTECT_UI_FORBIDDEN = 0x1;
     private static final String KEYCHAIN_SERVICE = "com.kerim.reclip.encryption-key";
     private static final String KEYCHAIN_ACCOUNT = "reclip";
 
@@ -153,11 +170,13 @@ public final class LocalEncryption {
             return fileKey.get();
         }
         SecretKey generated = generateAesKey();
-        String encoded = Base64.getEncoder().encodeToString(generated.getEncoded());
-        if (MacOsPermissions.isMacOs() && writeToMacOsKeychain(encoded)) {
-            return generated;
+        if (MacOsPermissions.isMacOs()) {
+            String encoded = Base64.getEncoder().encodeToString(generated.getEncoded());
+            if (writeToMacOsKeychain(encoded)) {
+                return generated;
+            }
         }
-        writeToKeyFile(fallbackKeyPath, encoded);
+        writeKeyToFile(fallbackKeyPath, generated);
         return generated;
     }
 
@@ -204,15 +223,45 @@ public final class LocalEncryption {
             return Optional.empty();
         }
         try {
-            String encoded = Files.readString(path, StandardCharsets.UTF_8).trim();
-            byte[] keyBytes = Base64.getDecoder().decode(encoded);
+            String raw = Files.readString(path, StandardCharsets.UTF_8).trim();
+            if (raw.startsWith(DPAPI_KEY_HEADER)) {
+                if (!WindowsWindowHelper.isWindows()) {
+                    return Optional.empty();
+                }
+                byte[] protectedBytes = Base64.getDecoder().decode(raw.substring(DPAPI_KEY_HEADER.length()).trim());
+                Optional<byte[]> unprotected = unprotectWithWindowsDpapi(protectedBytes);
+                if (unprotected.isPresent() && unprotected.get().length == KEY_BITS / 8) {
+                    return Optional.of(new SecretKeySpec(unprotected.get(), "AES"));
+                }
+                return Optional.empty();
+            }
+            byte[] keyBytes = Base64.getDecoder().decode(raw);
             if (keyBytes.length == KEY_BITS / 8) {
-                return Optional.of(new SecretKeySpec(keyBytes, "AES"));
+                SecretKey key = new SecretKeySpec(keyBytes, "AES");
+                if (WindowsWindowHelper.isWindows()) {
+                    try {
+                        writeKeyToFile(path, key);
+                    } catch (RuntimeException ignored) {
+                        // Best-effort upgrade to DPAPI storage.
+                    }
+                }
+                return Optional.of(key);
             }
         } catch (IOException | IllegalArgumentException ignored) {
             // Ignore unreadable/corrupt key file and regenerate.
         }
         return Optional.empty();
+    }
+
+    private static void writeKeyToFile(Path path, SecretKey key) {
+        String serialized = Base64.getEncoder().encodeToString(key.getEncoded());
+        if (WindowsWindowHelper.isWindows()) {
+            Optional<byte[]> protectedBytes = protectWithWindowsDpapi(key.getEncoded());
+            if (protectedBytes.isPresent()) {
+                serialized = DPAPI_KEY_HEADER + Base64.getEncoder().encodeToString(protectedBytes.get());
+            }
+        }
+        writeToKeyFile(path, serialized);
     }
 
     private static void writeToKeyFile(Path path, String encodedKey) {
@@ -228,14 +277,169 @@ public final class LocalEncryption {
         }
     }
 
+    static Optional<byte[]> protectWithWindowsDpapi(byte[] plainBytes) {
+        if (!WindowsWindowHelper.isWindows() || plainBytes == null || plainBytes.length == 0) {
+            return Optional.empty();
+        }
+        WindowsDpapi dpapi = WindowsDpapi.INSTANCE;
+        if (dpapi == null) {
+            return Optional.empty();
+        }
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment inData = arena.allocate(plainBytes.length);
+            MemorySegment.copy(plainBytes, 0, inData, ValueLayout.JAVA_BYTE, 0, plainBytes.length);
+            MemorySegment inBlob = allocateDataBlob(arena, plainBytes.length, inData);
+            MemorySegment outBlob = arena.allocate(16L, 8L);
+
+            int ok = (int) dpapi.cryptProtectData.invokeExact(
+                    inBlob,
+                    MemorySegment.NULL,
+                    MemorySegment.NULL,
+                    MemorySegment.NULL,
+                    MemorySegment.NULL,
+                    CRYPTPROTECT_UI_FORBIDDEN,
+                    outBlob);
+            if (ok == 0) {
+                return Optional.empty();
+            }
+            int outLen = outBlob.get(ValueLayout.JAVA_INT, 0L);
+            MemorySegment outPtr = outBlob.get(ValueLayout.ADDRESS, 8L);
+            try {
+                if (outLen <= 0 || outPtr.equals(MemorySegment.NULL)) {
+                    return Optional.empty();
+                }
+                return Optional.of(outPtr.reinterpret(outLen).toArray(ValueLayout.JAVA_BYTE));
+            } finally {
+                if (!outPtr.equals(MemorySegment.NULL)) {
+                    MemorySegment ignored = (MemorySegment) dpapi.localFree.invokeExact(outPtr);
+                }
+            }
+        } catch (Throwable ignored) {
+            return Optional.empty();
+        }
+    }
+
+    static Optional<byte[]> unprotectWithWindowsDpapi(byte[] protectedBytes) {
+        if (!WindowsWindowHelper.isWindows() || protectedBytes == null || protectedBytes.length == 0) {
+            return Optional.empty();
+        }
+        WindowsDpapi dpapi = WindowsDpapi.INSTANCE;
+        if (dpapi == null) {
+            return Optional.empty();
+        }
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment inData = arena.allocate(protectedBytes.length);
+            MemorySegment.copy(protectedBytes, 0, inData, ValueLayout.JAVA_BYTE, 0, protectedBytes.length);
+            MemorySegment inBlob = allocateDataBlob(arena, protectedBytes.length, inData);
+            MemorySegment outBlob = arena.allocate(16L, 8L);
+
+            int ok = (int) dpapi.cryptUnprotectData.invokeExact(
+                    inBlob,
+                    MemorySegment.NULL,
+                    MemorySegment.NULL,
+                    MemorySegment.NULL,
+                    MemorySegment.NULL,
+                    CRYPTPROTECT_UI_FORBIDDEN,
+                    outBlob);
+            if (ok == 0) {
+                return Optional.empty();
+            }
+            int outLen = outBlob.get(ValueLayout.JAVA_INT, 0L);
+            MemorySegment outPtr = outBlob.get(ValueLayout.ADDRESS, 8L);
+            try {
+                if (outLen <= 0 || outPtr.equals(MemorySegment.NULL)) {
+                    return Optional.empty();
+                }
+                return Optional.of(outPtr.reinterpret(outLen).toArray(ValueLayout.JAVA_BYTE));
+            } finally {
+                if (!outPtr.equals(MemorySegment.NULL)) {
+                    MemorySegment ignored = (MemorySegment) dpapi.localFree.invokeExact(outPtr);
+                }
+            }
+        } catch (Throwable ignored) {
+            return Optional.empty();
+        }
+    }
+
+    private static MemorySegment allocateDataBlob(Arena arena, int length, MemorySegment dataPtr) {
+        MemorySegment blob = arena.allocate(16L, 8L);
+        blob.set(ValueLayout.JAVA_INT, 0L, length);
+        blob.set(ValueLayout.ADDRESS, 8L, dataPtr);
+        return blob;
+    }
+
+    private record WindowsDpapi(
+            MethodHandle cryptProtectData,
+            MethodHandle cryptUnprotectData,
+            MethodHandle localFree) {
+
+        static final WindowsDpapi INSTANCE = load();
+
+        private static WindowsDpapi load() {
+            if (!WindowsWindowHelper.isWindows() || ValueLayout.ADDRESS.byteSize() != 8L) {
+                return null;
+            }
+            try {
+                Linker linker = Linker.nativeLinker();
+                SymbolLookup crypt32 = SymbolLookup.libraryLookup("Crypt32.dll", Arena.global());
+                SymbolLookup kernel32 = SymbolLookup.libraryLookup("Kernel32.dll", Arena.global());
+                return new WindowsDpapi(
+                        linker.downcallHandle(
+                                crypt32.find("CryptProtectData").orElseThrow(),
+                                FunctionDescriptor.of(
+                                        ValueLayout.JAVA_INT,
+                                        ValueLayout.ADDRESS,
+                                        ValueLayout.ADDRESS,
+                                        ValueLayout.ADDRESS,
+                                        ValueLayout.ADDRESS,
+                                        ValueLayout.ADDRESS,
+                                        ValueLayout.JAVA_INT,
+                                        ValueLayout.ADDRESS)),
+                        linker.downcallHandle(
+                                crypt32.find("CryptUnprotectData").orElseThrow(),
+                                FunctionDescriptor.of(
+                                        ValueLayout.JAVA_INT,
+                                        ValueLayout.ADDRESS,
+                                        ValueLayout.ADDRESS,
+                                        ValueLayout.ADDRESS,
+                                        ValueLayout.ADDRESS,
+                                        ValueLayout.ADDRESS,
+                                        ValueLayout.JAVA_INT,
+                                        ValueLayout.ADDRESS)),
+                        linker.downcallHandle(
+                                kernel32.find("LocalFree").orElseThrow(),
+                                FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS)));
+            } catch (Throwable ignored) {
+                return null;
+            }
+        }
+    }
+
     public static void setOwnerOnlyPermissions(Path path) {
         try {
             Set<PosixFilePermission> perms = EnumSet.of(
                     PosixFilePermission.OWNER_READ,
                     PosixFilePermission.OWNER_WRITE);
             Files.setPosixFilePermissions(path, perms);
+            return;
         } catch (UnsupportedOperationException | IOException ignored) {
-            // Non-POSIX filesystem (e.g. Windows).
+            // Fall through to Windows ACL handling if applicable.
+        }
+        if (WindowsWindowHelper.isWindows()) {
+            try {
+                AclFileAttributeView aclView = Files.getFileAttributeView(path, AclFileAttributeView.class);
+                if (aclView != null) {
+                    UserPrincipal owner = aclView.getOwner();
+                    AclEntry ownerEntry = AclEntry.newBuilder()
+                            .setType(AclEntryType.ALLOW)
+                            .setPrincipal(owner)
+                            .setPermissions(EnumSet.allOf(AclEntryPermission.class))
+                            .build();
+                    aclView.setAcl(List.of(ownerEntry));
+                }
+            } catch (IOException | SecurityException ignored) {
+                // Best-effort owner-only ACL.
+            }
         }
     }
 }

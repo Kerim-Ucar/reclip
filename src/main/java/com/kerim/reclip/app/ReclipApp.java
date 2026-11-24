@@ -23,6 +23,8 @@ import com.kerim.reclip.platform.WindowFocusHelper;
 import com.kerim.reclip.platform.macos.MacOsPasteService;
 import com.kerim.reclip.platform.macos.MacOsPasteboard;
 import com.kerim.reclip.platform.macos.MacOsPermissions;
+import com.kerim.reclip.platform.windows.WindowsClipboard;
+import com.kerim.reclip.platform.windows.WindowsPasteService;
 import com.kerim.reclip.platform.windows.WindowsWindowHelper;
 import com.kerim.reclip.ui.DashboardWindow;
 import com.kerim.reclip.ui.PickerWindow;
@@ -117,7 +119,7 @@ public class ReclipApp extends Application {
                 clipboardProvider,
                 ClipboardObserver.DEFAULT_POLL_INTERVAL,
                 event -> {
-                    if (MacOsPasteboard.isFrontmostAppExcluded(currentSettings.excludedApps())) {
+                    if (isFrontmostAppExcluded(currentSettings.excludedApps())) {
                         return;
                     }
                     historyService.recordEntry(
@@ -161,7 +163,7 @@ public class ReclipApp extends Application {
         };
 
         outsideClickDetector = new OutsideClickDetector();
-        PasteService pasteService = new MacOsPasteService();
+        PasteService pasteService = createPasteService();
         Stage pickerStage = createPickerStage(primaryStage);
         PickerWindow pickerWindow = new PickerWindow(
                 pickerStage,
@@ -442,7 +444,7 @@ public class ReclipApp extends Application {
             Shortcut.defaultShortcut().format();
 
             OutsideClickDetector detector = new OutsideClickDetector();
-            PasteService pasteService = new MacOsPasteService();
+            PasteService pasteService = createPasteService();
             Stage pickerStage = createPickerStage(primaryStage);
             PickerWindow pickerWindow = new PickerWindow(
                     pickerStage, historyService, entry -> {}, detector, pasteService);
@@ -505,6 +507,17 @@ public class ReclipApp extends Application {
         Stage pickerStage = new Stage();
         pickerStage.initOwner(primaryStage);
         return pickerStage;
+    }
+
+    private static PasteService createPasteService() {
+        return WindowsWindowHelper.isWindows() ? new WindowsPasteService() : new MacOsPasteService();
+    }
+
+    private static boolean isFrontmostAppExcluded(List<String> excludedApps) {
+        if (WindowsWindowHelper.isWindows()) {
+            return WindowsClipboard.isFrontmostAppExcluded(excludedApps);
+        }
+        return MacOsPasteboard.isFrontmostAppExcluded(excludedApps);
     }
 
     private static void registerAppReopenHandler(Runnable onReopen) {

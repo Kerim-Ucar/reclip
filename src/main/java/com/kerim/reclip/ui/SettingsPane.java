@@ -198,9 +198,13 @@ public class SettingsPane extends VBox {
         Region divider2 = new Region();
         divider2.getStyleClass().add("settings-divider");
 
+        boolean macOs = MacOsPermissions.isMacOs();
+
         Label autoPasteTitle = new Label("Auto-paste:");
         autoPasteTitle.getStyleClass().add("row-title");
-        Label autoPasteHint = new Label("Opt-in: simulates paste into the previous app (macOS Accessibility required)");
+        Label autoPasteHint = new Label(macOs
+                ? "Opt-in: simulates paste into the previous app (macOS Accessibility required)"
+                : "Opt-in: simulates Ctrl+V paste into the previous app");
         autoPasteHint.getStyleClass().add("row-subtitle");
         autoPasteCheckBox.getStyleClass().add("apple-checkbox");
         autoPasteCheckBox.setOnAction(e -> {
@@ -229,7 +233,6 @@ public class SettingsPane extends VBox {
         recheckPermissionsButton.setMinWidth(Region.USE_PREF_SIZE);
         recheckPermissionsButton.setOnAction(e -> refreshPermissionStatus());
         permissionActionsRow.setAlignment(Pos.CENTER_LEFT);
-        boolean macOs = MacOsPermissions.isMacOs();
         permissionStatusRow.setVisible(macOs);
         permissionStatusRow.setManaged(macOs);
 
@@ -241,7 +244,9 @@ public class SettingsPane extends VBox {
 
         Label excludedTitle = new Label("Excluded apps:");
         excludedTitle.getStyleClass().add("row-title");
-        Label excludedHint = new Label("Ignore copies from these apps (macOS Passwords, Keychain & concealed secrets are always ignored)");
+        Label excludedHint = new Label(macOs
+                ? "Ignore copies from these apps (macOS Passwords, Keychain & concealed secrets are always ignored)"
+                : "Ignore copies from these apps (concealed secrets and password managers are marked sensitive)");
         excludedHint.getStyleClass().add("row-subtitle");
         excludedAppsField.setPromptText("e.g. 1Password, Bitwarden, KeePassXC");
         excludedAppsField.getStyleClass().add("chord-field");

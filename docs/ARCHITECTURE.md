@@ -49,7 +49,9 @@ src/main/java/com/kerim/reclip/
       MacOsPermissions.java     # AXIsProcessTrusted check & System Settings deep link
       MacOsStatusBarTray.java   # Native NSStatusBar menu-bar integration
     windows/
-      WindowsWindowHelper.java  # Win32 foreground focus, DWM dark title bars, DPI helpers
+      WindowsClipboard.java     # GetClipboardSequenceNumber polling, concealed formats & app exclusion
+      WindowsPasteService.java  # Win32 SendInput Ctrl+V simulation
+      WindowsWindowHelper.java  # Win32 foreground focus, process lookup, DWM dark title bars, DPI helpers
   ui/
     PickerWindow.java           # Floating cursor-positioned picker
     DashboardWindow.java        # Main panel (Recent Copies, Settings, warning banner)
@@ -63,8 +65,8 @@ src/main/java/com/kerim/reclip/
 ## Threading & Concurrency Model
 
 - **JavaFX Application Thread**: Owns all scene-graph mutations, `PickerWindow`, `DashboardWindow`, `SettingsWindow`, and `ImagePreviewSupport` popups.
-- **`reclip-clipboard-observer` (daemon)**: Polls `ClipboardProvider.readContent()` on a fixed delay (`500 ms`). On macOS, `MacOsPasteboard.changeCount()` short-circuits unchanged polls in O(1) without locking AWT's `CClipboard`.
-- **`reclip-clipboard-writer` / `reclip-auto-paste` (daemon)**: Offloads clipboard writes (`writeContent`, image loading, `NSPasteboard` writes) and delayed `Cmd+V` auto-paste so the JavaFX UI thread never blocks on OS clipboard locks.
+- **`reclip-clipboard-observer` (daemon)**: Polls `ClipboardProvider.readContent()` on a fixed delay (`500 ms`). On macOS, `MacOsPasteboard.changeCount()` short-circuits unchanged polls in O(1) without locking AWT's `CClipboard`; on Windows, `WindowsClipboard.sequenceNumber()` (`GetClipboardSequenceNumber`) does the same without opening the clipboard.
+- **`reclip-clipboard-writer` / `reclip-auto-paste` (daemon)**: Offloads clipboard writes (`writeContent`, image loading, `NSPasteboard` writes) and delayed `Cmd+V` / `Ctrl+V` auto-paste so the JavaFX UI thread never blocks on OS clipboard locks.
 - **JNativeHook Hook Thread**: Matches only the configured shortcut chord (never logging keystrokes) and dispatches picker toggles to the JavaFX thread.
 
 ## Data & Privacy Boundaries
