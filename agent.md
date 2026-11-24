@@ -107,10 +107,10 @@ Clipboard histories can contain passwords, authentication tokens, personal data,
 - [x] README with demo GIF/screenshots, architecture, and install instructions.
 
 ### Phase 4 — Distribution and optimization
-- [ ] Package with `jpackage` on each target OS.
+- [x] Package with `jpackage` on each target OS.
 - [ ] Measure cold start, idle memory, CPU use, and popup latency.
 - [ ] Prototype GraalVM Native Image / GluonFX in a separate branch.
-- [ ] Keep `jpackage` as the supported fallback if native image adds too much complexity.
+- [x] Keep `jpackage` as the supported fallback if native image adds too much complexity.
 
 ## Engineering conventions
 - Prefer clear, small classes and meaningful names; avoid giant controllers and static global state.

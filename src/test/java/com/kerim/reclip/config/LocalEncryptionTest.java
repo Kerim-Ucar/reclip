@@ -5,16 +5,22 @@ import com.kerim.reclip.history.ContentType;
 import com.kerim.reclip.history.FileHistoryRepository;
 import com.kerim.reclip.hotkey.Shortcut;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.AclEntry;
+import java.nio.file.attribute.AclFileAttributeView;
+import java.nio.file.attribute.UserPrincipal;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -81,5 +87,24 @@ class LocalEncryptionTest {
         FileHistoryRepository reloaded = new FileHistoryRepository(historyPath, true, encryption);
         assertEquals(1, reloaded.findAll().size());
         assertEquals("confidential-note", reloaded.findAll().getFirst().content());
+    }
+
+    @Test
+    @EnabledOnOs(OS.WINDOWS)
+    void protectsAndUnprotectsKeyWithWindowsDpapiAndRestrictsAcl(@TempDir Path tempDir) throws IOException {
+        byte[] rawKey = LocalEncryption.generateAesKey().getEncoded();
+        byte[] protectedBytes = LocalEncryption.protectWithWindowsDpapi(rawKey).orElseThrow();
+        byte[] unprotected = LocalEncryption.unprotectWithWindowsDpapi(protectedBytes).orElseThrow();
+        assertArrayEquals(rawKey, unprotected);
+
+        Path secretFile = tempDir.resolve(".key");
+        Files.writeString(secretFile, "test-key", StandardCharsets.UTF_8);
+        LocalEncryption.setOwnerOnlyPermissions(secretFile);
+
+        AclFileAttributeView aclView = Files.getFileAttributeView(secretFile, AclFileAttributeView.class);
+        UserPrincipal owner = aclView.getOwner();
+        List<AclEntry> acl = aclView.getAcl();
+        assertEquals(1, acl.size());
+        assertEquals(owner, acl.getFirst().principal());
     }
 }

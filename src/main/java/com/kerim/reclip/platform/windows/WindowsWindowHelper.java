@@ -47,6 +47,7 @@ public final class WindowsWindowHelper {
     private static final MemorySegment HKEY_CURRENT_USER = MemorySegment.ofAddress(0x80000001L);
     private static final int RRF_RT_REG_DWORD = 0x00000010;
 
+    private static final int PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
     private static final int CURRENT_PID = (int) ProcessHandle.current().pid();
     private static final Object PREVIOUS_WINDOW_LOCK = new Object();
     private static MemorySegment previousForegroundHwnd = MemorySegment.NULL;
@@ -277,6 +278,64 @@ public final class WindowsWindowHelper {
         }
     }
 
+    /**
+     * Returns executable identifiers (e.g. {@code "1Password.exe"} and {@code "1Password"})
+     * for the current foreground Windows application, or an empty list if unavailable.
+     */
+    public static List<String> frontmostAppIdentifiers() {
+        if (!isWindows()) {
+            return List.of();
+        }
+        try (Arena arena = Arena.ofConfined()) {
+            Win32 win32 = Win32Holder.INSTANCE;
+            if (win32 == null || win32.openProcess == null || win32.queryFullProcessImageNameW == null || win32.closeHandle == null) {
+                return List.of();
+            }
+            MemorySegment fg = (MemorySegment) win32.getForegroundWindow.invokeExact();
+            if (fg.equals(MemorySegment.NULL)) {
+                return List.of();
+            }
+            int pid = getWindowProcessId(win32, arena, fg);
+            if (pid == 0) {
+                return List.of();
+            }
+            MemorySegment hProcess = (MemorySegment) win32.openProcess.invokeExact(
+                    PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if (hProcess.equals(MemorySegment.NULL)) {
+                return List.of();
+            }
+            try {
+                int maxChars = 1024;
+                MemorySegment pathBuf = arena.allocate(ValueLayout.JAVA_CHAR, maxChars);
+                MemorySegment sizeBuf = arena.allocate(ValueLayout.JAVA_INT);
+                sizeBuf.set(ValueLayout.JAVA_INT, 0, maxChars);
+                int ok = (int) win32.queryFullProcessImageNameW.invokeExact(hProcess, 0, pathBuf, sizeBuf);
+                if (ok == 0) {
+                    return List.of();
+                }
+                int len = sizeBuf.get(ValueLayout.JAVA_INT, 0);
+                if (len <= 0 || len > maxChars) {
+                    return List.of();
+                }
+                byte[] bytes = pathBuf.asSlice(0, (long) len * 2L).toArray(ValueLayout.JAVA_BYTE);
+                String fullPath = new String(bytes, StandardCharsets.UTF_16LE);
+                int sep = Math.max(fullPath.lastIndexOf('\\'), fullPath.lastIndexOf('/'));
+                String exeName = sep >= 0 ? fullPath.substring(sep + 1) : fullPath;
+                if (exeName.isBlank()) {
+                    return List.of();
+                }
+                if (exeName.toLowerCase(Locale.ROOT).endsWith(".exe") && exeName.length() > 4) {
+                    return List.of(exeName, exeName.substring(0, exeName.length() - 4));
+                }
+                return List.of(exeName);
+            } finally {
+                int ignored = (int) win32.closeHandle.invokeExact(hProcess);
+            }
+        } catch (Throwable ignored) {
+            return List.of();
+        }
+    }
+
     private static void forceForeground(Win32 win32, MemorySegment targetHwnd, boolean restoreIfMinimized)
             throws Throwable {
         MemorySegment currentFg = (MemorySegment) win32.getForegroundWindow.invokeExact();
@@ -382,7 +441,10 @@ public final class WindowsWindowHelper {
             MethodHandle getWindowLongPtrW,
             MethodHandle setWindowLongPtrW,
             MethodHandle dwmSetWindowAttribute,
-            MethodHandle regGetValueW) {
+            MethodHandle regGetValueW,
+            MethodHandle openProcess,
+            MethodHandle queryFullProcessImageNameW,
+            MethodHandle closeHandle) {
 
         static Win32 load() {
             try {
@@ -424,6 +486,30 @@ public final class WindowsWindowHelper {
                             .orElse(null);
                 } catch (RuntimeException ignored) {
                     // Registry theme check optional.
+                }
+
+                MethodHandle openProc = null;
+                MethodHandle queryExe = null;
+                MethodHandle closeHnd = null;
+                try {
+                    SymbolLookup kernel32 = SymbolLookup.libraryLookup("kernel32.dll", Arena.global());
+                    openProc = kernel32.find("OpenProcess")
+                            .map(sym -> linker.downcallHandle(
+                                    sym,
+                                    FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.JAVA_INT, ValueLayout.JAVA_INT, ValueLayout.JAVA_INT)))
+                            .orElse(null);
+                    queryExe = kernel32.find("QueryFullProcessImageNameW")
+                            .map(sym -> linker.downcallHandle(
+                                    sym,
+                                    FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS)))
+                            .orElse(null);
+                    closeHnd = kernel32.find("CloseHandle")
+                            .map(sym -> linker.downcallHandle(
+                                    sym,
+                                    FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS)))
+                            .orElse(null);
+                } catch (RuntimeException ignored) {
+                    // Process inspection optional.
                 }
 
                 return new Win32(
@@ -478,7 +564,10 @@ public final class WindowsWindowHelper {
                                 user32.find("SetWindowLongPtrW").orElseThrow(),
                                 FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.JAVA_INT, ValueLayout.JAVA_LONG)),
                         dwmSetAttr,
-                        regGetVal);
+                        regGetVal,
+                        openProc,
+                        queryExe,
+                        closeHnd);
             } catch (Throwable ignored) {
                 return null;
             }

@@ -73,6 +73,7 @@ public class PickerWindow {
     private volatile boolean maskPasswords = AppSettings.DEFAULT_MASK_PASSWORDS;
     private volatile int passwordExpirySeconds = AppSettings.DEFAULT_PASSWORD_EXPIRY_SECONDS;
     private volatile Consumer<String> onPasteError;
+    private Robot fxRobot;
     private boolean showingInProgress;
 
     /**
@@ -299,10 +300,10 @@ public class PickerWindow {
         });
     }
 
-    private static Point2D resolveLogicalScreenPoint(int nativeX, int nativeY) {
+    private Point2D resolveLogicalScreenPoint(int nativeX, int nativeY) {
         if (WindowsWindowHelper.isWindows()) {
             try {
-                return new Robot().getMousePosition();
+                return getOrCreateRobot().getMousePosition();
             } catch (RuntimeException ignored) {
                 Screen primary = Screen.getPrimary();
                 double scaleX = primary != null && primary.getOutputScaleX() > 0 ? primary.getOutputScaleX() : 1.0;
@@ -311,6 +312,13 @@ public class PickerWindow {
             }
         }
         return new Point2D(nativeX, nativeY);
+    }
+
+    private Robot getOrCreateRobot() {
+        if (fxRobot == null) {
+            fxRobot = new Robot();
+        }
+        return fxRobot;
     }
 
     private boolean isContextMenuShowing() {
@@ -401,8 +409,7 @@ public class PickerWindow {
 
     private void positionAtCursor() {
         try {
-            Robot robot = new Robot();
-            Point2D cursor = robot.getMousePosition();
+            Point2D cursor = getOrCreateRobot().getMousePosition();
             List<Rectangle2D> allBounds = Screen.getScreens().stream()
                     .map(Screen::getVisualBounds)
                     .toList();
