@@ -58,6 +58,21 @@
     -fx-text-fill: #FFFFFF;
 }
 
+.picker-list .list-cell .entry-text {
+    -fx-text-fill: rgba(255, 255, 255, 0.92);
+}
+
+.picker-list .list-cell:filled:selected .entry-text {
+    -fx-text-fill: #FFFFFF;
+}
+
+.image-hover-caret {
+    -fx-text-fill: rgba(255, 255, 255, 0.72);
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-padding: 0 2 0 4;
+}
+
 .list-view .scroll-bar:horizontal,
 .list-view .scroll-bar:vertical {
     -fx-pref-width: 0;

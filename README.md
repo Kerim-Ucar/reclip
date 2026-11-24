@@ -1,6 +1,6 @@
 # Reclip
 
-A local-first, privacy-focused clipboard history manager built with **Java 25** and **JavaFX 25**. Reclip runs quietly in the background, monitors plain-text clipboard changes, and lets you recall recent or saved snippets from a floating cursor-positioned picker or the main dashboard panel.
+A local-first, privacy-focused clipboard history manager built with **Java 25** and **JavaFX 25**. Reclip runs quietly in the background, monitors text, image, and file copies, and lets you recall recent or saved snippets from a floating cursor-positioned picker or the main dashboard panel.
 
 ## Screenshots
 
@@ -12,11 +12,14 @@ A local-first, privacy-focused clipboard history manager built with **Java 25** 
 
 ## Current Features
 
-- **Background Clipboard Monitoring**: Quietly tracks plain-text copies in the background, avoids duplicate entries, and includes a **Pause Monitoring** toggle in the menu bar / system tray.
+- **Background Clipboard Monitoring**: Quietly tracks **plain text**, **images**, and **copied files** in the background with SHA-256 deduplication and a **Pause Monitoring** toggle in the menu bar / system tray.
 - **Floating Cursor Picker**: Opens right near your mouse cursor across multiple monitors using a configurable global shortcut (`Ctrl + Shift + Space` by default).
   - Navigate with `Up` / `Down` / `Home` / `End`, copy with `Enter` or click, dismiss with `Esc` or clicking outside, delete with `BackSpace` / `Delete`, and pin/unpin with `Cmd+P` (`Ctrl+P`) or right-click.
+  - **Image Hover Preview**: Hovering over an `[Image]` entry reveals a `›` caret and opens a scaled-down preview popover without stealing focus.
+- **Optional Auto-Paste (macOS, opt-in)**: Disabled by default; when enabled in Settings (with Accessibility permission), selecting an item in the picker restores focus to your previous app and automatically pastes (`Cmd+V`).
+- **Actionable Permission Guidance**: Displays live macOS Accessibility status in Settings with **Open Settings** and **Re-check** controls, plus non-blocking warning banners if shortcuts or auto-paste lack permissions.
 - **Main Dashboard & Settings**:
-  - Runs as a single-instance menu-bar / system-tray app with quick access to recent copies and settings.
+  - Runs as a single-instance menu-bar / system-tray app with quick access to recent copies and scrollable settings.
   - **Recent Copies** tab with live search (`Cmd+F` / `Ctrl+F`), keyboard navigation, and right-click actions (`Copy`, `Pin`/`Unpin`, `Delete`, `Clear Unpinned`).
   - **Custom Shortcut Recorder**: Set any multi-key shortcut combination.
   - **Popup Copy Limit**: Choose how many recent copies (`1–15`) appear in the floating picker.
@@ -27,24 +30,12 @@ A local-first, privacy-focused clipboard history manager built with **Java 25** 
 
 ## Future Features
 
-- **Encrypted Local Persistence**: Optional encryption at rest for saved history and persisted snippets (currently normal clipboard history stays in memory only, and saved settings/snippets in `~/.reclip/settings.properties` are unencrypted).
-- **Optional Auto-Paste**: Automatically paste the selected item into your previous app instead of only copying it.
-- **Rich Clipboard Formats**: Support for images and files in addition to plain text.
-- **App Exclusion Rules**: Automatically ignore copies from password managers or chosen apps.
+- **Windows Auto-Paste**: Opt-in `Ctrl+V` simulation on Windows (currently implemented on macOS).
+- **Windows App Exclusion Rules**: Per-app exclusion filtering on Windows (currently implemented on macOS).
 
 ## Architecture
 
-```text
-src/main/java/com/kerim/reclip/
-  app/             # Launcher, JavaFX lifecycle, single-instance file lock
-  clipboard/       # ClipboardProvider abstraction, AWT implementation, polling observer
-  config/          # AppSettings, PersistedSnippet, PropertiesSettingsRepository
-  history/         # ClipboardEntry, HistoryRepository, InMemory/File repositories, HistoryService
-  hotkey/          # GlobalShortcutService, JNativeHook chord matching, OutsideClickDetector
-  ipc/             # ReclipIpcServer (Unix domain socket) & Chrome NativeMessagingHost
-  platform/        # macOS AppKit & Windows Win32/DWM focus, titlebar, and tray adapters
-  ui/              # PickerWindow, DashboardWindow, SettingsPane, SettingsWindow, TrayController
-```
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full package layout, threading model, and data/privacy boundaries.
 
 ## Install (macOS)
 
@@ -93,6 +84,10 @@ Download **[Reclip-1.0.0.dmg](https://github.com/Kerim-Ucar/reclip/releases)**, 
 .\gradlew.bat packageWinExe
 ```
 
+## Testing Checklist
+
+See [docs/TESTING_CHECKLIST.md](docs/TESTING_CHECKLIST.md) for the manual verification checklist covering macOS and Windows 10/11.
+
 ## Optional Integrations
 
 - **Chrome Right-Click Menu (macOS & Windows)**: See [extensions/chrome/README.md](extensions/chrome/README.md).
@@ -101,8 +96,9 @@ Download **[Reclip-1.0.0.dmg](https://github.com/Kerim-Ucar/reclip/releases)**, 
 ## Privacy & Storage
 
 - **Local-first**: No telemetry, analytics, cloud sync, or network calls.
-- **In-memory history**: Normal clipboard history is kept in memory only and cleared when you quit.
-- **Settings & persisted snippets**: Saved locally in `~/.reclip/settings.properties` and are **not encrypted by default**. Use **Pause Monitoring** before copying passwords or sensitive data.
+- **In-memory history**: Normal clipboard history is kept in memory only and cleared when you quit (session image cache files are deleted on exit).
+- **Concealed & excluded apps (macOS)**: Automatically ignores `org.nspasteboard.ConcealedType` / `TransientType` secrets from password managers, plus any user-configured **Excluded apps** in Settings.
+- **Encrypted local storage**: `~/.reclip/settings.properties` and optional `history.dat` are encrypted at rest with **AES-256-GCM** using a key stored in the **macOS Login Keychain** (with `0600` key-file fallback on non-Keychain systems). Use **Pause Monitoring** before copying sensitive data on unsupported platforms.
 
 ## Platform Status
 

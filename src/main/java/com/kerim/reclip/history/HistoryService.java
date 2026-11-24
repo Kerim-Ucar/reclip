@@ -1,5 +1,6 @@
 package com.kerim.reclip.history;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
@@ -17,6 +18,7 @@ public class HistoryService {
     private final HistoryRepository repository;
     private final int maxUnpinnedEntries;
     private final List<Runnable> changeListeners = new CopyOnWriteArrayList<>();
+    private final List<Runnable> deleteListeners = new CopyOnWriteArrayList<>();
 
     /**
      * Creates a history service with {@link #DEFAULT_MAX_UNPINNED_ENTRIES}.
@@ -50,27 +52,96 @@ public class HistoryService {
      * @return the saved or promoted {@link ClipboardEntry}
      */
     public ClipboardEntry recordText(String text, Instant observedAt) {
-        Objects.requireNonNull(text, "text must not be null");
+        return recordEntry(ContentType.TEXT, text, "", observedAt);
+    }
+
+    /**
+     * Records captured typed clipboard content (text, image, or files), deduplicating
+     * against existing entries and enforcing the configured retention limit.
+     *
+     * @param contentType the content type
+     * @param content     the captured serialized content
+     * @param label       optional display label (e.g. image dimensions or file names)
+     * @param observedAt  when the content was observed
+     * @return the saved or promoted {@link ClipboardEntry}
+     */
+    public ClipboardEntry recordEntry(ContentType contentType, String content, String label, Instant observedAt) {
+        return recordEntry(contentType, content, label, observedAt, false, Duration.ZERO);
+    }
+
+    /**
+     * Records captured typed clipboard content (text, image, or files) with optional
+     * sensitive expiration, deduplicating against existing entries and enforcing retention.
+     *
+     * @param contentType the content type
+     * @param content     the captured serialized content
+     * @param label       optional display label (e.g. image dimensions or file names)
+     * @param observedAt  when the content was observed
+     * @param sensitive   whether the entry is a secret/password that expires automatically
+     * @param expiry      expiration duration when {@code sensitive} is {@code true}
+     * @return the saved or promoted {@link ClipboardEntry}
+     */
+    public ClipboardEntry recordEntry(
+            ContentType contentType,
+            String content,
+            String label,
+            Instant observedAt,
+            boolean sensitive,
+            Duration expiry) {
+        Objects.requireNonNull(contentType, "contentType must not be null");
+        Objects.requireNonNull(content, "content must not be null");
         Objects.requireNonNull(observedAt, "observedAt must not be null");
-        if (text.isEmpty()) {
-            throw new IllegalArgumentException("text must not be empty");
+        Objects.requireNonNull(expiry, "expiry must not be null");
+        if (content.isEmpty()) {
+            throw new IllegalArgumentException("content must not be empty");
         }
 
-        Optional<ClipboardEntry> existing = repository.findByContent(ContentType.TEXT, text);
+        Instant expiresAt = sensitive ? observedAt.plus(expiry) : null;
+        Optional<ClipboardEntry> existing = repository.findByContent(contentType, content);
         ClipboardEntry saved = existing
-                .map(entry -> entry.withLastUsedAt(observedAt))
+                .map(entry -> {
+                    boolean keepSensitive = entry.sensitive() || sensitive;
+                    Instant nextExpiry = sensitive ? expiresAt : entry.expiresAt();
+                    return entry.withLastUsedAt(observedAt).withSensitiveExpiry(keepSensitive, nextExpiry);
+                })
                 .orElseGet(() -> new ClipboardEntry(
                         UUID.randomUUID(),
-                        text,
-                        ContentType.TEXT,
+                        content,
+                        contentType,
                         observedAt,
                         observedAt,
-                        false));
+                        false,
+                        label,
+                        sensitive,
+                        expiresAt));
 
         repository.save(saved);
         repository.pruneUnpinned(maxUnpinnedEntries);
         notifyListeners();
         return saved;
+    }
+
+    /**
+     * Removes any sensitive entries whose expiration timestamp has passed.
+     *
+     * @param now current timestamp
+     * @return number of expired entries removed
+     */
+    public int purgeExpired(Instant now) {
+        Objects.requireNonNull(now, "now must not be null");
+        int removed = 0;
+        for (ClipboardEntry entry : repository.findAll()) {
+            if (entry.sensitive() && entry.expiresAt() != null && !entry.expiresAt().isAfter(now)) {
+                if (repository.deleteById(entry.id())) {
+                    removed++;
+                }
+            }
+        }
+        if (removed > 0) {
+            notifyDeleteListeners();
+            notifyListeners();
+        }
+        return removed;
     }
 
     /**
@@ -120,6 +191,7 @@ public class HistoryService {
         Objects.requireNonNull(id, "id must not be null");
         boolean removed = repository.deleteById(id);
         if (removed) {
+            notifyDeleteListeners();
             notifyListeners();
         }
         return removed;
@@ -130,6 +202,7 @@ public class HistoryService {
      */
     public void clearUnpinned() {
         repository.clearUnpinned();
+        notifyDeleteListeners();
         notifyListeners();
     }
 
@@ -141,6 +214,22 @@ public class HistoryService {
     public void addChangeListener(Runnable listener) {
         Objects.requireNonNull(listener, "listener must not be null");
         changeListeners.add(listener);
+    }
+
+    /**
+     * Registers a listener notified when entries are deleted or cleared.
+     *
+     * @param listener callback to invoke on deletion
+     */
+    public void addDeleteListener(Runnable listener) {
+        Objects.requireNonNull(listener, "listener must not be null");
+        deleteListeners.add(listener);
+    }
+
+    private void notifyDeleteListeners() {
+        for (Runnable listener : deleteListeners) {
+            listener.run();
+        }
     }
 
     private void notifyListeners() {

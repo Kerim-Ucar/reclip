@@ -3,8 +3,8 @@ package com.kerim.reclip.config;
 import com.kerim.reclip.hotkey.Shortcut;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
+import java.io.StringReader;
+import java.io.StringWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -28,13 +28,24 @@ public final class PropertiesSettingsRepository implements SettingsRepository {
     private static final String KEY_MAX_HISTORY = "history.maxEntries";
     private static final String KEY_VISIBLE_COPIES = "ui.visibleCopies";
     private static final String KEY_PERSIST_HISTORY = "history.persist";
+    private static final String KEY_AUTO_PASTE = "clipboard.autoPaste";
+    private static final String KEY_EXCLUDED_APPS = "privacy.excludedApps";
+    private static final String KEY_MASK_PASSWORDS = "privacy.maskPasswords";
+    private static final String KEY_PASSWORD_EXPIRY_SECONDS = "privacy.passwordExpirySeconds";
+    private static final String KEY_ONE_TIME_PASSWORDS = "privacy.oneTimePasswords";
     private static final String KEY_PERSISTED_COUNT = "persisted.count";
     private static final String KEY_PERSISTED_PREFIX = "persisted.";
 
     private final Path settingsPath;
+    private final LocalEncryption encryption;
 
     public PropertiesSettingsRepository(Path settingsPath) {
+        this(settingsPath, LocalEncryption.disabled());
+    }
+
+    public PropertiesSettingsRepository(Path settingsPath, LocalEncryption encryption) {
         this.settingsPath = Objects.requireNonNull(settingsPath, "settingsPath must not be null");
+        this.encryption = Objects.requireNonNull(encryption, "encryption must not be null");
     }
 
     public static Path defaultSettingsPath() {
@@ -47,9 +58,11 @@ public final class PropertiesSettingsRepository implements SettingsRepository {
             return AppSettings.defaults();
         }
         Properties props = new Properties();
-        try (InputStream in = Files.newInputStream(settingsPath)) {
-            props.load(in);
-        } catch (IOException e) {
+        try {
+            byte[] raw = Files.readAllBytes(settingsPath);
+            String decrypted = encryption.decrypt(raw);
+            props.load(new StringReader(decrypted));
+        } catch (IOException | IllegalStateException e) {
             return AppSettings.defaults();
         }
 
@@ -67,9 +80,31 @@ public final class PropertiesSettingsRepository implements SettingsRepository {
                 AppSettings.MIN_VISIBLE_COPIES,
                 AppSettings.MAX_VISIBLE_COPIES);
         boolean persistHistory = Boolean.parseBoolean(props.getProperty(KEY_PERSIST_HISTORY, "false"));
+        boolean autoPaste = Boolean.parseBoolean(props.getProperty(KEY_AUTO_PASTE, "false"));
+        List<String> excludedApps = parseExcludedApps(props.getProperty(KEY_EXCLUDED_APPS));
+        boolean maskPasswords = Boolean.parseBoolean(
+                props.getProperty(KEY_MASK_PASSWORDS, Boolean.toString(AppSettings.DEFAULT_MASK_PASSWORDS)));
+        int passwordExpirySeconds = parseClampedInt(
+                props.getProperty(KEY_PASSWORD_EXPIRY_SECONDS),
+                AppSettings.DEFAULT_PASSWORD_EXPIRY_SECONDS,
+                AppSettings.MIN_PASSWORD_EXPIRY_SECONDS,
+                AppSettings.MAX_PASSWORD_EXPIRY_SECONDS);
+        boolean oneTimePasswords = Boolean.parseBoolean(
+                props.getProperty(KEY_ONE_TIME_PASSWORDS, Boolean.toString(AppSettings.DEFAULT_ONE_TIME_PASSWORDS)));
         List<PersistedSnippet> persistedSnippets = parsePersistedSnippets(props);
 
-        return new AppSettings(shortcut, paused, maxHistory, visibleCopies, persistHistory, persistedSnippets);
+        return new AppSettings(
+                shortcut,
+                paused,
+                maxHistory,
+                visibleCopies,
+                persistHistory,
+                persistedSnippets,
+                autoPaste,
+                excludedApps,
+                maskPasswords,
+                passwordExpirySeconds,
+                oneTimePasswords);
     }
 
     @Override
@@ -84,6 +119,11 @@ public final class PropertiesSettingsRepository implements SettingsRepository {
         props.setProperty(KEY_MAX_HISTORY, Integer.toString(settings.maxHistoryEntries()));
         props.setProperty(KEY_VISIBLE_COPIES, Integer.toString(settings.visibleCopies()));
         props.setProperty(KEY_PERSIST_HISTORY, Boolean.toString(settings.persistHistory()));
+        props.setProperty(KEY_AUTO_PASTE, Boolean.toString(settings.autoPaste()));
+        props.setProperty(KEY_EXCLUDED_APPS, String.join(",", settings.excludedApps()));
+        props.setProperty(KEY_MASK_PASSWORDS, Boolean.toString(settings.maskPasswords()));
+        props.setProperty(KEY_PASSWORD_EXPIRY_SECONDS, Integer.toString(settings.passwordExpirySeconds()));
+        props.setProperty(KEY_ONE_TIME_PASSWORDS, Boolean.toString(settings.oneTimePasswords()));
         List<PersistedSnippet> persisted = settings.persistedSnippets();
         props.setProperty(KEY_PERSISTED_COUNT, Integer.toString(persisted.size()));
         for (int i = 0; i < persisted.size(); i++) {
@@ -97,9 +137,11 @@ public final class PropertiesSettingsRepository implements SettingsRepository {
             if (parent != null) {
                 Files.createDirectories(parent);
             }
-            try (OutputStream out = Files.newOutputStream(settingsPath)) {
-                props.store(out, "Reclip user settings");
-            }
+            StringWriter writer = new StringWriter();
+            props.store(writer, "Reclip user settings");
+            byte[] encoded = encryption.encrypt(writer.toString());
+            Files.write(settingsPath, encoded);
+            LocalEncryption.setOwnerOnlyPermissions(settingsPath);
         } catch (IOException e) {
             throw new IllegalStateException("Failed to save settings to " + settingsPath, e);
         }
@@ -124,6 +166,23 @@ public final class PropertiesSettingsRepository implements SettingsRepository {
             keys.add(legacyKey.trim().toUpperCase(Locale.ROOT));
         }
         return keys.isEmpty() ? Shortcut.defaultShortcut() : new Shortcut(keys);
+    }
+
+    private static List<String> parseExcludedApps(String raw) {
+        if (raw == null) {
+            return AppSettings.DEFAULT_EXCLUDED_APPS;
+        }
+        if (raw.isBlank()) {
+            return List.of();
+        }
+        List<String> apps = new ArrayList<>();
+        for (String token : raw.split(",")) {
+            String trimmed = token.trim();
+            if (!trimmed.isEmpty()) {
+                apps.add(trimmed);
+            }
+        }
+        return List.copyOf(apps);
     }
 
     private static List<PersistedSnippet> parsePersistedSnippets(Properties props) {

@@ -1,5 +1,6 @@
 package com.kerim.reclip.clipboard;
 
+import com.kerim.reclip.history.ContentType;
 import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
@@ -109,6 +110,26 @@ class ClipboardObserverTest {
                 () -> new ClipboardObserver(provider, Duration.ofMillis(-10), event -> {}));
     }
 
+    @Test
+    void emitsTypedContentAndDeduplicatesSelfWrittenImages() {
+        FakeClipboardProvider provider = new FakeClipboardProvider();
+        List<ClipboardContentEvent> events = new ArrayList<>();
+        try (ClipboardObserver observer = ClipboardObserver.forTypedContent(
+                provider, Duration.ofMillis(100), events::add)) {
+
+            observer.markSelfWritten(ContentType.IMAGE, "png-base64-1");
+            provider.setPayload(new ClipboardPayload(ContentType.IMAGE, "png-base64-1", "Image (2×2)"));
+            observer.pollOnce();
+            assertEquals(0, events.size());
+
+            provider.setPayload(new ClipboardPayload(ContentType.FILES, "/tmp/doc.pdf", "File: doc.pdf"));
+            observer.pollOnce();
+            assertEquals(1, events.size());
+            assertEquals(ContentType.FILES, events.getFirst().contentType());
+            assertEquals("File: doc.pdf", events.getFirst().displayLabel());
+        }
+    }
+
     private static ClipboardObserver newObserver(
             FakeClipboardProvider provider,
             List<ClipboardTextEvent> events,
@@ -120,6 +141,7 @@ class ClipboardObserverTest {
     private static final class FakeClipboardProvider implements ClipboardProvider {
 
         private String text;
+        private ClipboardPayload payload;
 
         @Override
         public Optional<String> readText() {
@@ -129,11 +151,28 @@ class ClipboardObserverTest {
         @Override
         public boolean writeText(String text) {
             this.text = text;
+            this.payload = text == null || text.isEmpty()
+                    ? null
+                    : new ClipboardPayload(ContentType.TEXT, text, "");
             return true;
+        }
+
+        @Override
+        public Optional<ClipboardPayload> readContent() {
+            if (payload != null) {
+                return Optional.of(payload);
+            }
+            return ClipboardProvider.super.readContent();
         }
 
         void setText(String text) {
             this.text = text;
+            this.payload = null;
+        }
+
+        void setPayload(ClipboardPayload payload) {
+            this.payload = payload;
+            this.text = null;
         }
     }
 }

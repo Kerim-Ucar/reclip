@@ -1,11 +1,17 @@
 package com.kerim.reclip.ui;
 
 import com.kerim.reclip.app.ReclipApp;
+import com.kerim.reclip.config.AppSettings;
 import com.kerim.reclip.history.ClipboardEntry;
+import com.kerim.reclip.history.ContentType;
 import com.kerim.reclip.history.HistoryService;
 import com.kerim.reclip.hotkey.OutsideClickDetector;
+import com.kerim.reclip.platform.PasteResult;
+import com.kerim.reclip.platform.PasteService;
 import com.kerim.reclip.platform.WindowFocusHelper;
 import com.kerim.reclip.platform.windows.WindowsWindowHelper;
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Point2D;
@@ -33,8 +39,12 @@ import javafx.stage.StageStyle;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /**
@@ -46,14 +56,23 @@ public class PickerWindow {
     public static final double DEFAULT_HEIGHT = 156;
     public static final int MAX_VISIBLE_ENTRIES = 3;
     private static final int PREVIEW_MAX_LENGTH = 160;
+    private static final long AUTO_PASTE_DELAY_MS = 80L;
 
     private final Stage stage;
     private final HistoryService historyService;
     private final Consumer<ClipboardEntry> onEntrySelected;
     private final OutsideClickDetector outsideClickDetector;
+    private final PasteService pasteService;
+    private final ScheduledExecutorService autoPasteExecutor;
+    private final ImagePreviewSupport imagePreviewSupport = new ImagePreviewSupport();
     private final ListView<ClipboardEntry> historyList;
+    private final Timeline countdownTimeline;
     private ContextMenu activeContextMenu;
     private int maxVisibleEntries = MAX_VISIBLE_ENTRIES;
+    private volatile boolean autoPasteEnabled;
+    private volatile boolean maskPasswords = AppSettings.DEFAULT_MASK_PASSWORDS;
+    private volatile int passwordExpirySeconds = AppSettings.DEFAULT_PASSWORD_EXPIRY_SECONDS;
+    private volatile Consumer<String> onPasteError;
     private boolean showingInProgress;
 
     /**
@@ -69,11 +88,43 @@ public class PickerWindow {
             HistoryService historyService,
             Consumer<ClipboardEntry> onEntrySelected,
             OutsideClickDetector outsideClickDetector) {
+        this(stage, historyService, onEntrySelected, outsideClickDetector, null);
+    }
+
+    /**
+     * Creates the mini picker window with optional auto-paste support.
+     *
+     * @param stage                the JavaFX stage to configure
+     * @param historyService       the history service to query and display
+     * @param onEntrySelected      callback invoked when the user chooses an entry
+     * @param outsideClickDetector detector used to dismiss the popup when clicking outside
+     * @param pasteService         optional paste service invoked when auto-paste is enabled
+     */
+    public PickerWindow(
+            Stage stage,
+            HistoryService historyService,
+            Consumer<ClipboardEntry> onEntrySelected,
+            OutsideClickDetector outsideClickDetector,
+            PasteService pasteService) {
         this.stage = Objects.requireNonNull(stage, "stage must not be null");
         this.historyService = Objects.requireNonNull(historyService, "historyService must not be null");
         this.onEntrySelected = Objects.requireNonNull(onEntrySelected, "onEntrySelected must not be null");
         this.outsideClickDetector = Objects.requireNonNull(outsideClickDetector, "outsideClickDetector must not be null");
+        this.pasteService = pasteService;
+        this.autoPasteExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "reclip-auto-paste");
+            thread.setDaemon(true);
+            return thread;
+        });
         this.historyList = new ListView<>();
+        this.countdownTimeline = new Timeline(new KeyFrame(
+                javafx.util.Duration.millis(250),
+                e -> {
+                    if (stage.isShowing()) {
+                        imagePreviewSupport.tickCountdowns(Instant.now());
+                    }
+                }));
+        this.countdownTimeline.setCycleCount(Timeline.INDEFINITE);
         configureStage();
         refresh();
     }
@@ -171,6 +222,7 @@ public class PickerWindow {
             refresh();
             positionAtCursor();
             stage.show();
+            countdownTimeline.play();
             WindowFocusHelper.requestAppForeground();
             stage.toFront();
             stage.requestFocus();
@@ -200,14 +252,16 @@ public class PickerWindow {
      * Hides the picker window and restores focus to the previously active application.
      */
     public void hide() {
-        hideInternal(true);
+        hideInternal(true, null);
     }
 
     private void hideWithoutFocusRestore() {
-        hideInternal(false);
+        hideInternal(false, null);
     }
 
-    private void hideInternal(boolean restorePreviousFocus) {
+    private void hideInternal(boolean restorePreviousFocus, Runnable afterFocusRestore) {
+        countdownTimeline.stop();
+        imagePreviewSupport.hide();
         if (activeContextMenu != null) {
             activeContextMenu.hide();
             activeContextMenu = null;
@@ -218,6 +272,9 @@ public class PickerWindow {
             stage.hide();
             if (restorePreviousFocus) {
                 WindowFocusHelper.restorePreviousAppFocus();
+                if (afterFocusRestore != null) {
+                    afterFocusRestore.run();
+                }
             } else {
                 WindowFocusHelper.clearPreviousApp();
             }
@@ -286,6 +343,33 @@ public class PickerWindow {
     }
 
     /**
+     * Enables or disables automatic pasting after selecting an entry from the picker.
+     *
+     * @param autoPasteEnabled {@code true} to simulate paste after restoring focus
+     */
+    public void setAutoPasteEnabled(boolean autoPasteEnabled) {
+        this.autoPasteEnabled = autoPasteEnabled;
+    }
+
+    /**
+     * Registers a callback invoked when auto-paste fails or lacks OS permission.
+     *
+     * @param onPasteError error message consumer, or {@code null} to clear
+     */
+    public void setOnPasteError(Consumer<String> onPasteError) {
+        this.onPasteError = onPasteError;
+    }
+
+    public void setMaskPasswords(boolean maskPasswords) {
+        this.maskPasswords = maskPasswords;
+        refresh();
+    }
+
+    public void setPasswordExpirySeconds(int passwordExpirySeconds) {
+        this.passwordExpirySeconds = Math.max(1, passwordExpirySeconds);
+    }
+
+    /**
      * Updates the maximum number of recent copies displayed in the popup.
      *
      * @param maxVisibleEntries number of entries to show
@@ -348,16 +432,17 @@ public class PickerWindow {
         if (!recent.isEmpty()) {
             historyList.getSelectionModel().selectFirst();
         }
-        stage.setHeight(computePopupHeight(recent));
+        stage.setHeight(computePopupHeight(recent, maskPasswords));
     }
 
-    private static double computePopupHeight(List<ClipboardEntry> entries) {
+    private static double computePopupHeight(List<ClipboardEntry> entries, boolean maskPasswords) {
         if (entries.isEmpty()) {
             return 44.0;
         }
         double total = 10.0;
         for (ClipboardEntry entry : entries) {
-            String preview = formatPreview((entry.pinned() ? "★ " : "") + entry.displayText());
+            String text = (entry.sensitive() && maskPasswords) ? "Password" : entry.displayWithTypeBadge();
+            String preview = formatPreview((entry.pinned() ? "★ " : "") + text);
             int lines = Math.max(1, (int) Math.ceil(preview.length() / 38.0));
             total += lines * 18.0 + 10.0;
         }
@@ -373,8 +458,10 @@ public class PickerWindow {
     }
 
     private ListCell<ClipboardEntry> createEntryCell() {
-        ClipboardEntryCell cell = new ClipboardEntryCell();
-        cell.setWrapText(true);
+        ClipboardEntryCell cell = new ClipboardEntryCell(
+                imagePreviewSupport,
+                () -> maskPasswords,
+                () -> passwordExpirySeconds * 1000L);
         cell.setPrefWidth(0);
         cell.maxWidthProperty().bind(historyList.widthProperty().subtract(16));
         cell.setMinHeight(Control.USE_PREF_SIZE);
@@ -407,7 +494,12 @@ public class PickerWindow {
         pinItem.setOnAction(e -> historyService.togglePinned(entry.id()));
 
         MenuItem deleteItem = new MenuItem("Delete");
-        deleteItem.setOnAction(e -> historyService.deleteEntry(entry.id()));
+        deleteItem.setDisable(entry.pinned());
+        deleteItem.setOnAction(e -> {
+            if (!entry.pinned()) {
+                historyService.deleteEntry(entry.id());
+            }
+        });
 
         MenuItem clearItem = new MenuItem("Clear Unpinned");
         clearItem.setOnAction(e -> historyService.clearUnpinned());
@@ -423,7 +515,7 @@ public class PickerWindow {
 
     private void deleteFocusedEntry() {
         ClipboardEntry selected = historyList.getSelectionModel().getSelectedItem();
-        if (selected != null) {
+        if (selected != null && !selected.pinned()) {
             historyService.deleteEntry(selected.id());
         }
     }
@@ -466,20 +558,66 @@ public class PickerWindow {
     }
 
     private void chooseEntry(ClipboardEntry entry) {
-        onEntrySelected.accept(entry);
-        hide();
+        boolean shouldAutoPaste = autoPasteEnabled && pasteService != null;
+        hideInternal(true, () -> autoPasteExecutor.execute(() -> {
+            onEntrySelected.accept(entry);
+            if (shouldAutoPaste) {
+                try {
+                    Thread.sleep(AUTO_PASTE_DELAY_MS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                PasteResult result = pasteService.paste();
+                if (!result.pasted()) {
+                    result.errorMessage().ifPresent(message -> {
+                        Consumer<String> errorHandler = onPasteError;
+                        if (errorHandler != null) {
+                            errorHandler.accept(message);
+                        } else {
+                            System.err.println(message);
+                        }
+                    });
+                }
+            }
+        }));
     }
 
     private static final class ClipboardEntryCell extends ListCell<ClipboardEntry> {
+
+        private final ImagePreviewSupport.EntryCellContent content;
+        private final java.util.function.BooleanSupplier maskPasswordsSupplier;
+        private final java.util.function.LongSupplier expiryMillisSupplier;
+
+        private ClipboardEntryCell(
+                ImagePreviewSupport imagePreviewSupport,
+                java.util.function.BooleanSupplier maskPasswordsSupplier,
+                java.util.function.LongSupplier expiryMillisSupplier) {
+            this.content = imagePreviewSupport.installOnCell(this);
+            this.maskPasswordsSupplier = maskPasswordsSupplier;
+            this.expiryMillisSupplier = expiryMillisSupplier;
+        }
 
         @Override
         protected void updateItem(ClipboardEntry item, boolean empty) {
             super.updateItem(item, empty);
             if (empty || item == null) {
+                content.clear();
                 setText(null);
+                setGraphic(null);
             } else {
                 String prefix = item.pinned() ? "★ " : "";
-                setText(prefix + formatPreview(item.displayText()));
+                String label = (item.sensitive() && maskPasswordsSupplier.getAsBoolean())
+                        ? "Password"
+                        : formatPreview(item.displayWithTypeBadge());
+                content.update(
+                        item,
+                        prefix + label,
+                        item.contentType() == ContentType.IMAGE,
+                        isHover(),
+                        expiryMillisSupplier.getAsLong());
+                setText(null);
+                setGraphic(content.root());
             }
         }
     }

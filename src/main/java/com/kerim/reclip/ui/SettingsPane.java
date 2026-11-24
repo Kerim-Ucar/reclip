@@ -4,12 +4,15 @@ import com.kerim.reclip.config.AppSettings;
 import com.kerim.reclip.config.PersistedSnippet;
 import com.kerim.reclip.hotkey.Shortcut;
 import com.kerim.reclip.hotkey.ShortcutRegistrationResult;
+import com.kerim.reclip.platform.macos.MacOsPermissions;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.ContentDisplay;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Slider;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
@@ -26,7 +29,9 @@ import javafx.scene.paint.Color;
 import javafx.scene.shape.SVGPath;
 import javafx.scene.shape.StrokeLineCap;
 
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
@@ -41,7 +46,14 @@ public class SettingsPane extends VBox {
 
     @FunctionalInterface
     public interface SettingsApplyHandler {
-        ShortcutRegistrationResult apply(Shortcut shortcut, int visibleCopies);
+        ShortcutRegistrationResult apply(
+                Shortcut shortcut,
+                int visibleCopies,
+                boolean autoPaste,
+                List<String> excludedApps,
+                boolean maskPasswords,
+                int passwordExpirySeconds,
+                boolean oneTimePasswords);
     }
 
     private final Supplier<AppSettings> settingsSupplier;
@@ -59,6 +71,19 @@ public class SettingsPane extends VBox {
             AppSettings.MIN_VISIBLE_COPIES,
             AppSettings.MAX_VISIBLE_COPIES,
             AppSettings.DEFAULT_VISIBLE_COPIES);
+    private final CheckBox autoPasteCheckBox = new CheckBox("Paste automatically after selecting in picker");
+    private final Label permissionStatusLabel = new Label();
+    private final Button openPermissionsButton = new Button("Open Settings");
+    private final Button recheckPermissionsButton = new Button("Re-check");
+    private final HBox permissionStatusRow = new HBox(8, permissionStatusLabel, openPermissionsButton, recheckPermissionsButton);
+    private final TextField excludedAppsField = new TextField();
+    private final CheckBox maskPasswordsCheckBox = new CheckBox("Hide password text as \"Password\"");
+    private final CheckBox oneTimePasswordsCheckBox = new CheckBox("One-time use (remove after first copy/paste)");
+    private final Spinner<Integer> passwordExpirySpinner = new Spinner<>(
+            AppSettings.MIN_PASSWORD_EXPIRY_SECONDS,
+            AppSettings.MAX_PASSWORD_EXPIRY_SECONDS,
+            AppSettings.DEFAULT_PASSWORD_EXPIRY_SECONDS,
+            5);
     private final TextField persistedLabelField = new TextField();
     private final TextField persistedTextField = new TextField();
     private final ListView<PersistedSnippet> persistedListView = new ListView<>();
@@ -171,6 +196,78 @@ public class SettingsPane extends VBox {
         Region divider2 = new Region();
         divider2.getStyleClass().add("settings-divider");
 
+        Label autoPasteTitle = new Label("Auto-paste:");
+        autoPasteTitle.getStyleClass().add("row-title");
+        Label autoPasteHint = new Label("Opt-in: simulates paste into the previous app (macOS Accessibility required)");
+        autoPasteHint.getStyleClass().add("row-subtitle");
+        autoPasteCheckBox.getStyleClass().add("apple-checkbox");
+        autoPasteCheckBox.setOnAction(e -> {
+            setStatus("", false);
+            refreshPermissionStatus();
+        });
+
+        permissionStatusLabel.setWrapText(true);
+        HBox.setHgrow(permissionStatusLabel, Priority.ALWAYS);
+        openPermissionsButton.getStyleClass().add("compact-button");
+        openPermissionsButton.setOnAction(e -> {
+            if (!MacOsPermissions.openAccessibilitySettings()) {
+                setStatus("Open System Settings → Privacy & Security → Accessibility manually.", true);
+            }
+        });
+        recheckPermissionsButton.getStyleClass().add("compact-button");
+        recheckPermissionsButton.setOnAction(e -> refreshPermissionStatus());
+        permissionStatusRow.setAlignment(Pos.CENTER_LEFT);
+        boolean macOs = MacOsPermissions.isMacOs();
+        permissionStatusRow.setVisible(macOs);
+        permissionStatusRow.setManaged(macOs);
+
+        VBox autoPasteRow = new VBox(8, new VBox(2, autoPasteTitle, autoPasteHint), autoPasteCheckBox, permissionStatusRow);
+        autoPasteRow.getStyleClass().add("settings-row");
+
+        Region divider3 = new Region();
+        divider3.getStyleClass().add("settings-divider");
+
+        Label excludedTitle = new Label("Excluded apps:");
+        excludedTitle.getStyleClass().add("row-title");
+        Label excludedHint = new Label("Ignore copies from these apps (macOS Passwords, Keychain & concealed secrets are always ignored)");
+        excludedHint.getStyleClass().add("row-subtitle");
+        excludedAppsField.setPromptText("e.g. 1Password, Bitwarden, KeePassXC");
+        excludedAppsField.getStyleClass().add("chord-field");
+
+        VBox excludedRow = new VBox(8, new VBox(2, excludedTitle, excludedHint), excludedAppsField);
+        excludedRow.getStyleClass().add("settings-row");
+
+        Region divider4 = new Region();
+        divider4.getStyleClass().add("settings-divider");
+
+        Label passwordProtectionTitle = new Label("Password protection:");
+        passwordProtectionTitle.getStyleClass().add("row-title");
+        Label passwordProtectionHint = new Label("Unchecking only removes the \"Password\" cover; sensitive items still expire");
+        passwordProtectionHint.getStyleClass().add("row-subtitle");
+        maskPasswordsCheckBox.getStyleClass().add("apple-checkbox");
+        maskPasswordsCheckBox.setOnAction(e -> setStatus("", false));
+        oneTimePasswordsCheckBox.getStyleClass().add("apple-checkbox");
+        oneTimePasswordsCheckBox.setOnAction(e -> setStatus("", false));
+
+        Label expiryLabel = new Label("Expire after (seconds):");
+        expiryLabel.getStyleClass().add("row-subtitle");
+        passwordExpirySpinner.setEditable(true);
+        passwordExpirySpinner.setPrefWidth(82);
+        passwordExpirySpinner.getStyleClass().add("apple-spinner");
+        HBox expiryRow = new HBox(10, expiryLabel, passwordExpirySpinner);
+        expiryRow.setAlignment(Pos.CENTER_LEFT);
+
+        VBox passwordProtectionRow = new VBox(
+                8,
+                new VBox(2, passwordProtectionTitle, passwordProtectionHint),
+                maskPasswordsCheckBox,
+                oneTimePasswordsCheckBox,
+                expiryRow);
+        passwordProtectionRow.getStyleClass().add("settings-row");
+
+        Region divider5 = new Region();
+        divider5.getStyleClass().add("settings-divider");
+
         Label persistedTitle = new Label("Persisted texts:");
         persistedTitle.getStyleClass().add("row-title");
         Label persistedHint = new Label("Optional name (shown in popup) + text to copy");
@@ -225,8 +322,21 @@ public class SettingsPane extends VBox {
         VBox persistRow = new VBox(8, new VBox(2, persistedTitle, persistedHint), persistedInputRow, persistedListView);
         persistRow.getStyleClass().add("settings-row");
 
-        VBox groupedForm = new VBox(shortcutRow, divider, copiesRow, divider2, persistRow);
+        VBox groupedForm = new VBox(
+                shortcutRow, divider,
+                copiesRow, divider2,
+                autoPasteRow, divider3,
+                excludedRow, divider4,
+                passwordProtectionRow, divider5,
+                persistRow);
         groupedForm.getStyleClass().add("settings-group");
+
+        ScrollPane formScroll = new ScrollPane(groupedForm);
+        formScroll.setFitToWidth(true);
+        formScroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        formScroll.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        formScroll.getStyleClass().add("settings-scroll");
+        VBox.setVgrow(formScroll, Priority.ALWAYS);
 
         statusLabel.setWrapText(true);
         statusLabel.getStyleClass().add("status-ok");
@@ -249,7 +359,7 @@ public class SettingsPane extends VBox {
         footer.getChildren().add(saveButton);
         footer.setAlignment(Pos.CENTER_LEFT);
 
-        getChildren().setAll(groupedForm, footer);
+        getChildren().setAll(formScroll, footer);
     }
 
     public boolean isRecording() {
@@ -268,6 +378,12 @@ public class SettingsPane extends VBox {
         SpinnerValueFactory<Integer> factory = visibleCopiesSpinner.getValueFactory();
         factory.setValue(current.visibleCopies());
         visibleCopiesSlider.setValue(current.visibleCopies());
+        autoPasteCheckBox.setSelected(current.autoPaste());
+        excludedAppsField.setText(String.join(", ", current.excludedApps()));
+        maskPasswordsCheckBox.setSelected(current.maskPasswords());
+        oneTimePasswordsCheckBox.setSelected(current.oneTimePasswords());
+        passwordExpirySpinner.getValueFactory().setValue(current.passwordExpirySeconds());
+        refreshPermissionStatus();
         persistedListView.getItems().setAll(current.persistedSnippets());
         persistedLabelField.clear();
         persistedTextField.clear();
@@ -382,19 +498,70 @@ public class SettingsPane extends VBox {
         statusLabel.setText(message);
     }
 
+    private void refreshPermissionStatus() {
+        if (!MacOsPermissions.isMacOs()) {
+            return;
+        }
+        boolean trusted = MacOsPermissions.isAccessibilityTrusted();
+        permissionStatusLabel.getStyleClass().removeAll("permission-ok", "permission-warn");
+        if (trusted) {
+            permissionStatusLabel.getStyleClass().add("permission-ok");
+            permissionStatusLabel.setText("macOS Accessibility: Granted");
+            openPermissionsButton.setVisible(false);
+            openPermissionsButton.setManaged(false);
+            recheckPermissionsButton.setVisible(false);
+            recheckPermissionsButton.setManaged(false);
+        } else {
+            permissionStatusLabel.getStyleClass().add("permission-warn");
+            permissionStatusLabel.setText("macOS Accessibility: Required for global shortcuts & auto-paste");
+            openPermissionsButton.setVisible(true);
+            openPermissionsButton.setManaged(true);
+            recheckPermissionsButton.setVisible(true);
+            recheckPermissionsButton.setManaged(true);
+        }
+    }
+
     private void applySettings() {
         if (recordedKeys.isEmpty()) {
             setStatus("Press at least one key in the shortcut box.", true);
             return;
         }
         int copies = visibleCopiesSpinner.getValue();
+        boolean autoPaste = autoPasteCheckBox.isSelected();
+        List<String> excludedApps = parseExcludedApps(excludedAppsField.getText());
+        boolean maskPasswords = maskPasswordsCheckBox.isSelected();
+        boolean oneTimePasswords = oneTimePasswordsCheckBox.isSelected();
+        int expirySeconds = passwordExpirySpinner.getValue();
         Shortcut next = new Shortcut(recordedKeys);
-        ShortcutRegistrationResult result = onSettingsApplied.apply(next, copies);
-        if (result.registered()) {
-            setStatus("Saved", false);
-        } else {
-            setStatus(result.errorMessage().orElse("Failed to register shortcut."), true);
+        try {
+            ShortcutRegistrationResult result = onSettingsApplied.apply(
+                    next, copies, autoPaste, excludedApps, maskPasswords, expirySeconds, oneTimePasswords);
+            if (result.registered()) {
+                if (autoPaste && MacOsPermissions.isMacOs() && !MacOsPermissions.isAccessibilityTrusted()) {
+                    setStatus("Saved (grant Accessibility permission for auto-paste)", true);
+                } else {
+                    setStatus("Saved", false);
+                }
+            } else {
+                setStatus(result.errorMessage().orElse("Failed to register shortcut."), true);
+            }
+        } catch (RuntimeException e) {
+            setStatus("Unable to save settings: " + e.getMessage(), true);
         }
+    }
+
+    private static List<String> parseExcludedApps(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
+        List<String> result = new ArrayList<>();
+        for (String token : raw.split(",")) {
+            String trimmed = token.trim();
+            if (!trimmed.isEmpty()) {
+                result.add(trimmed);
+            }
+        }
+        return List.copyOf(result);
     }
 
     private static SVGPath createGlyph(String pathData, Color color) {

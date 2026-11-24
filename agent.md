@@ -100,11 +100,11 @@ Clipboard histories can contain passwords, authentication tokens, personal data,
 - [x] Usable keyboard focus and multi-monitor positioning.
 
 ### Phase 3 — Polish and robustness
-- [ ] Optional auto-paste, opt-in and disabled by default.
-- [ ] Better error handling and permission guidance.
-- [ ] Clipboard image/file support if practical, with clear type handling.
-- [ ] End-to-end tests/manual test checklist for macOS and Windows.
-- [ ] README with demo GIF/screenshots, architecture, and install instructions.
+- [x] Optional auto-paste, opt-in and disabled by default.
+- [x] Better error handling and permission guidance.
+- [x] Clipboard image/file support if practical, with clear type handling.
+- [x] End-to-end tests/manual test checklist for macOS and Windows.
+- [x] README with demo GIF/screenshots, architecture, and install instructions.
 
 ### Phase 4 — Distribution and optimization
 - [ ] Package with `jpackage` on each target OS.

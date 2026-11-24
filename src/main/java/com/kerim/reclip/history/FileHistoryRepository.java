@@ -1,5 +1,7 @@
 package com.kerim.reclip.history;
 
+import com.kerim.reclip.config.LocalEncryption;
+
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -21,10 +23,16 @@ public final class FileHistoryRepository implements HistoryRepository {
 
     private final InMemoryHistoryRepository delegate = new InMemoryHistoryRepository();
     private final Path storagePath;
+    private final LocalEncryption encryption;
     private volatile boolean persistenceEnabled;
 
     public FileHistoryRepository(Path storagePath, boolean persistenceEnabled) {
+        this(storagePath, persistenceEnabled, LocalEncryption.disabled());
+    }
+
+    public FileHistoryRepository(Path storagePath, boolean persistenceEnabled, LocalEncryption encryption) {
         this.storagePath = Objects.requireNonNull(storagePath, "storagePath must not be null");
+        this.encryption = Objects.requireNonNull(encryption, "encryption must not be null");
         this.persistenceEnabled = persistenceEnabled;
         if (persistenceEnabled) {
             loadFromDisk();
@@ -107,11 +115,12 @@ public final class FileHistoryRepository implements HistoryRepository {
             return;
         }
         try {
-            List<String> lines = Files.readAllLines(storagePath, StandardCharsets.UTF_8);
-            for (String line : lines) {
+            byte[] raw = Files.readAllBytes(storagePath);
+            String decoded = encryption.decrypt(raw);
+            for (String line : decoded.split("\\R")) {
                 parseLine(line).ifPresent(delegate::save);
             }
-        } catch (IOException ignored) {
+        } catch (IOException | IllegalStateException ignored) {
             // Start cleanly if local history file is unreadable.
         }
     }
@@ -125,11 +134,16 @@ public final class FileHistoryRepository implements HistoryRepository {
             List<ClipboardEntry> entries = delegate.findAll();
             List<String> lines = new ArrayList<>(entries.size());
             for (ClipboardEntry entry : entries) {
-                lines.add(formatLine(entry));
+                if (!entry.sensitive()) {
+                    lines.add(formatLine(entry));
+                }
             }
+            byte[] payload = encryption.encrypt(String.join("\n", lines));
             Path tempFile = storagePath.resolveSibling(storagePath.getFileName() + ".tmp");
-            Files.write(tempFile, lines, StandardCharsets.UTF_8);
+            Files.write(tempFile, payload);
+            LocalEncryption.setOwnerOnlyPermissions(tempFile);
             Files.move(tempFile, storagePath, StandardCopyOption.REPLACE_EXISTING);
+            LocalEncryption.setOwnerOnlyPermissions(storagePath);
         } catch (IOException ignored) {
             // Avoid crashing background clipboard observer on transient disk errors.
         }
@@ -146,20 +160,23 @@ public final class FileHistoryRepository implements HistoryRepository {
     private static String formatLine(ClipboardEntry entry) {
         String encodedContent = Base64.getEncoder()
                 .encodeToString(entry.content().getBytes(StandardCharsets.UTF_8));
+        String encodedLabel = Base64.getEncoder()
+                .encodeToString(entry.label().getBytes(StandardCharsets.UTF_8));
         return entry.id() + "\t"
                 + entry.contentType().name() + "\t"
                 + entry.createdAt().toEpochMilli() + "\t"
                 + entry.lastUsedAt().toEpochMilli() + "\t"
                 + entry.pinned() + "\t"
-                + encodedContent;
+                + encodedContent + "\t"
+                + encodedLabel;
     }
 
     private static Optional<ClipboardEntry> parseLine(String line) {
         if (line == null || line.isBlank()) {
             return Optional.empty();
         }
-        String[] parts = line.split("\t", 6);
-        if (parts.length != 6) {
+        String[] parts = line.split("\t", 7);
+        if (parts.length < 6) {
             return Optional.empty();
         }
         try {
@@ -172,7 +189,10 @@ public final class FileHistoryRepository implements HistoryRepository {
             if (content.isEmpty()) {
                 return Optional.empty();
             }
-            return Optional.of(new ClipboardEntry(id, content, type, createdAt, lastUsedAt, pinned));
+            String label = parts.length == 7
+                    ? new String(Base64.getDecoder().decode(parts[6]), StandardCharsets.UTF_8)
+                    : "";
+            return Optional.of(new ClipboardEntry(id, content, type, createdAt, lastUsedAt, pinned, label));
         } catch (IllegalArgumentException e) {
             return Optional.empty();
         }
