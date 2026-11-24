@@ -7,8 +7,11 @@ A local-first, privacy-focused clipboard history manager built with **Java 25** 
 ### Main Panel & Recent Copies
 ![Reclip Main Panel](ui.png)
 
-### Cursor Picker & Settings
+### Cursor Picker & Settings (macOS)
 ![Reclip Cursor Picker and Settings](mouse_and_settings.png)
+
+### Cursor Picker & Settings (Windows 11)
+![Reclip Windows 11 Picker and Settings](windows_ui.jpg)
 
 ## Current Features
 
@@ -40,7 +43,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full package layout, th
 
 ## Install (macOS)
 
-Download **[Reclip-1.0.0.dmg](https://github.com/Kerim-Ucar/reclip/releases)**, open the `.dmg`, and drag **Reclip.app** into **Applications** (no Java or Gradle setup required).
+Download **[Reclip-1.1.0.dmg](https://github.com/Kerim-Ucar/reclip/releases)**, open the `.dmg`, and drag **Reclip.app** into **Applications** (no Java or Gradle setup required).
 
 > **macOS Permissions:** Allow Reclip under **System Settings → Privacy & Security → Accessibility** (and **Input Monitoring** if asked) so global shortcuts work. If you update the app and it asks again, remove Reclip from that list (`−`) and add it back (`+`).
 
@@ -65,7 +68,7 @@ Download **[Reclip-1.0.0.dmg](https://github.com/Kerim-Ucar/reclip/releases)**, 
 # Build build/dist/Reclip.app
 ./gradlew packageMacApp
 
-# Build build/dist/Reclip-1.0.0.dmg
+# Build build/dist/Reclip-1.1.0.dmg
 ./gradlew packageMacDmg
 ```
 
@@ -81,7 +84,7 @@ Download **[Reclip-1.0.0.dmg](https://github.com/Kerim-Ucar/reclip/releases)**, 
 # Build self-contained build\dist\Reclip\Reclip.exe app image (with trimmed jlink runtime & JDK 25 AOT cache)
 .\gradlew.bat packageWinApp
 
-# Build build\dist\Reclip-1.0.0.exe per-user installer (auto-fetches portable WiX 3.14 if needed)
+# Build build\dist\Reclip-1.1.0.exe per-user installer (auto-fetches portable WiX 3.14 if needed)
 .\gradlew.bat packageWinExe
 ```
 
@@ -104,7 +107,7 @@ See [docs/TESTING_CHECKLIST.md](docs/TESTING_CHECKLIST.md) for the manual verifi
 ## Platform Status
 
 - **macOS (`aarch64`)**: Built and tested on macOS with Java 25 and JavaFX 25.
-- **Windows 10 / 11 (`x86_64`)**: Built and tested on Windows 11 with Java 25 and JavaFX 25 (system tray, global shortcuts, DPI-aware cursor picker, dark DWM title bars, foreground focus restoration, `Ctrl+V` auto-paste, O(1) sequence polling, concealed/excluded app filtering, DPAPI key protection, trimmed `jlink` + AOT `Reclip.exe`, and `Reclip-1.0.0.exe` installer).
+- **Windows 10 / 11 (`x86_64`)**: Built and tested on Windows 11 with Java 25 and JavaFX 25 (system tray, global shortcuts, DPI-aware cursor picker, dark DWM title bars, foreground focus restoration, `Ctrl+V` auto-paste, O(1) sequence polling, concealed/excluded app filtering, DPAPI key protection, trimmed `jlink` + AOT `Reclip.exe`, and `Reclip-1.1.0.exe` installer).
 
 ## License
 

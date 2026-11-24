@@ -62,6 +62,8 @@ public class DashboardWindow {
     private final Timeline countdownTimeline;
     private volatile boolean maskPasswords = AppSettings.DEFAULT_MASK_PASSWORDS;
     private volatile int passwordExpirySeconds = AppSettings.DEFAULT_PASSWORD_EXPIRY_SECONDS;
+    private volatile boolean showing;
+    private volatile boolean settingsSelected;
 
     private final TextField searchField = new TextField();
     private final ListView<ClipboardEntry> historyList = new ListView<>();
@@ -120,6 +122,7 @@ public class DashboardWindow {
             event.consume();
             hide();
         });
+        stage.setOnHidden(event -> showing = false);
         try (InputStream iconStream = getClass().getResourceAsStream("/icons/app-icon.png")) {
             if (iconStream != null) {
                 stage.getIcons().add(new Image(iconStream));
@@ -193,6 +196,7 @@ public class DashboardWindow {
                 return;
             }
             boolean showSettings = newToggle == settingsTab;
+            settingsSelected = showSettings;
             if (showSettings) {
                 SettingsPane pane = getOrCreateSettingsPane();
                 pane.reload();
@@ -290,6 +294,10 @@ public class DashboardWindow {
         return settingsPane != null && settingsPane.isRecording();
     }
 
+    public boolean isSettingsActive() {
+        return showing && settingsSelected;
+    }
+
     public void show() {
         Runnable showTask = () -> {
             refresh();
@@ -301,6 +309,7 @@ public class DashboardWindow {
             }
             stage.setOpacity(0);
             stage.show();
+            showing = true;
             syncCountdownTimeline();
             WindowFocusHelper.applyDarkTitleBar();
             WindowFocusHelper.activateAppOnly();
@@ -320,6 +329,7 @@ public class DashboardWindow {
             countdownTimeline.stop();
             imagePreviewSupport.hide();
             imagePreviewSupport.clearCache();
+            showing = false;
             stage.hide();
         };
         if (Platform.isFxApplicationThread()) {

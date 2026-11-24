@@ -5,6 +5,7 @@ import com.kerim.reclip.config.PersistedSnippet;
 import com.kerim.reclip.hotkey.Shortcut;
 import com.kerim.reclip.hotkey.ShortcutRegistrationResult;
 import com.kerim.reclip.platform.macos.MacOsPermissions;
+import com.kerim.reclip.platform.windows.WindowsWindowHelper;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
@@ -95,6 +96,7 @@ public class SettingsPane extends VBox {
     private final Set<String> heldKeys = new LinkedHashSet<>();
     private Set<String> recordedKeys = new LinkedHashSet<>(Shortcut.defaultShortcut().keys());
     private volatile boolean recording;
+    private volatile boolean chordFieldFocused;
 
     public SettingsPane(
             Supplier<AppSettings> settingsSupplier,
@@ -122,6 +124,15 @@ public class SettingsPane extends VBox {
         chordField.getStyleClass().add("chord-field");
         chordField.setOnKeyPressed(this::handleKeyPressed);
         chordField.setOnKeyReleased(this::handleKeyReleased);
+        chordField.focusedProperty().addListener((obs, wasFocused, isFocused) -> {
+            chordFieldFocused = isFocused;
+            if (!isFocused && recording) {
+                recording = false;
+                recordButton.setSelected(false);
+                recordButton.setText("Record");
+                heldKeys.clear();
+            }
+        });
         HBox.setHgrow(chordField, Priority.ALWAYS);
 
         recordButton.getStyleClass().add("record-button");
@@ -380,7 +391,7 @@ public class SettingsPane extends VBox {
     }
 
     public boolean isRecording() {
-        return recording;
+        return recording || chordFieldFocused;
     }
 
     public void reload() {
@@ -404,7 +415,11 @@ public class SettingsPane extends VBox {
         persistedListView.getItems().setAll(current.persistedSnippets());
         persistedLabelField.clear();
         persistedTextField.clear();
-        setStatus("", false);
+        if (WindowsWindowHelper.isWindows() && current.shortcut().keys().contains("META")) {
+            setStatus("Warning: Windows reserves the Win key for Start Menu/OS shortcuts.", true);
+        } else {
+            setStatus("", false);
+        }
     }
 
     private void addPersistedSnippet() {
@@ -451,7 +466,11 @@ public class SettingsPane extends VBox {
         syncJavaFxModifiers(heldKeys, event);
         recordedKeys.addAll(heldKeys);
         chordField.setText(new Shortcut(recordedKeys).format());
-        setStatus("", false);
+        if (WindowsWindowHelper.isWindows() && recordedKeys.contains("META")) {
+            setStatus("Warning: Windows reserves the Win key for Start Menu/OS shortcuts; prefer Ctrl/Alt/Shift.", true);
+        } else {
+            setStatus("", false);
+        }
     }
 
     private void handleKeyReleased(KeyEvent event) {
@@ -567,6 +586,8 @@ public class SettingsPane extends VBox {
             if (result.registered()) {
                 if (autoPaste && MacOsPermissions.isMacOs() && !MacOsPermissions.isAccessibilityTrusted()) {
                     setStatus("Saved (grant Accessibility permission for auto-paste)", true);
+                } else if (WindowsWindowHelper.isWindows() && next.keys().contains("META")) {
+                    setStatus("Saved (warning: Win key may conflict with Windows shortcuts)", true);
                 } else {
                     setStatus("Saved", false);
                 }
