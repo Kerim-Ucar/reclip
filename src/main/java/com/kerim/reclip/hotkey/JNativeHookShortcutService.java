@@ -5,6 +5,9 @@ import com.github.kwhat.jnativehook.NativeHookException;
 import com.github.kwhat.jnativehook.keyboard.NativeKeyEvent;
 import com.github.kwhat.jnativehook.keyboard.NativeKeyListener;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Objects;
@@ -40,6 +43,7 @@ public class JNativeHookShortcutService implements GlobalShortcutService {
             silenceJNativeHookLogger();
 
             try {
+                configureWritableLibraryPath();
                 if (!GlobalScreen.isNativeHookRegistered()) {
                     GlobalScreen.registerNativeHook();
                 }
@@ -122,6 +126,23 @@ public class JNativeHookShortcutService implements GlobalShortcutService {
         }
     }
 
+    private static void configureWritableLibraryPath() {
+        if (System.getProperty("jnativehook.lib.path") != null) {
+            return;
+        }
+        String userHome = System.getProperty("user.home");
+        if (userHome == null || userHome.isBlank()) {
+            return;
+        }
+        try {
+            Path libDir = Path.of(userHome, ".reclip", "lib");
+            Files.createDirectories(libDir);
+            System.setProperty("jnativehook.lib.path", libDir.toString());
+        } catch (IOException | SecurityException ignored) {
+            // Fall back to JNativeHook's default extraction directory.
+        }
+    }
+
     private static void silenceJNativeHookLogger() {
         Logger logger = Logger.getLogger(GlobalScreen.class.getPackage().getName());
         logger.setLevel(Level.WARNING);
@@ -131,7 +152,8 @@ public class JNativeHookShortcutService implements GlobalShortcutService {
     private static String buildActionableErrorMessage(Throwable error) {
         String osName = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         if (osName.contains("mac")) {
-            return "Unable to register global shortcut. Grant Accessibility / Input Monitoring permission in System Settings > Privacy & Security ("
+            return "Unable to register global shortcut. Add Reclip to both System Settings → Privacy & Security → Accessibility "
+                    + "and System Settings → Privacy & Security → Input Monitoring ("
                     + error.getMessage() + ").";
         }
         return "Unable to register global shortcut: " + error.getMessage();

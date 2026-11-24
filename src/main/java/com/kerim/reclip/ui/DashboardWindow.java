@@ -53,7 +53,11 @@ public class DashboardWindow {
     private final Stage stage;
     private final HistoryService historyService;
     private final Consumer<ClipboardEntry> onEntrySelected;
-    private final SettingsPane settingsPane;
+    private final Supplier<AppSettings> settingsSupplier;
+    private final SettingsPane.SettingsApplyHandler onSettingsApplied;
+    private final Consumer<PersistedSnippet> onAddPersistedSnippet;
+    private final Consumer<PersistedSnippet> onRemovePersistedSnippet;
+    private SettingsPane settingsPane;
     private final ImagePreviewSupport imagePreviewSupport = new ImagePreviewSupport();
     private final Timeline countdownTimeline;
     private volatile boolean maskPasswords = AppSettings.DEFAULT_MASK_PASSWORDS;
@@ -65,9 +69,10 @@ public class DashboardWindow {
     private final ToggleButton recentTab = new ToggleButton("Recent Copies");
     private final ToggleButton settingsTab = new ToggleButton("Settings");
     private final Button clearButton = new Button("Clear");
-    private final HBox noticeBanner = new HBox(8);
+    private final VBox noticeBanner = new VBox(8);
     private final Label noticeLabel = new Label();
-    private final Button noticeActionButton = new Button("Accessibility Settings");
+    private final Button noticeActionButton = new Button("Accessibility");
+    private final Button noticeInputMonitoringButton = new Button("Input Monitoring");
 
     public DashboardWindow(
             HistoryService historyService,
@@ -78,13 +83,11 @@ public class DashboardWindow {
             Consumer<PersistedSnippet> onRemovePersistedSnippet) {
         this.historyService = Objects.requireNonNull(historyService, "historyService must not be null");
         this.onEntrySelected = Objects.requireNonNull(onEntrySelected, "onEntrySelected must not be null");
+        this.settingsSupplier = Objects.requireNonNull(settingsSupplier, "settingsSupplier must not be null");
+        this.onSettingsApplied = Objects.requireNonNull(onSettingsApplied, "onSettingsApplied must not be null");
+        this.onAddPersistedSnippet = Objects.requireNonNull(onAddPersistedSnippet, "onAddPersistedSnippet must not be null");
+        this.onRemovePersistedSnippet = Objects.requireNonNull(onRemovePersistedSnippet, "onRemovePersistedSnippet must not be null");
         this.stage = new Stage();
-        this.settingsPane = new SettingsPane(
-                settingsSupplier,
-                onSettingsApplied,
-                onAddPersistedSnippet,
-                onRemovePersistedSnippet,
-                null);
         this.countdownTimeline = new Timeline(new KeyFrame(
                 javafx.util.Duration.millis(250),
                 e -> {
@@ -97,13 +100,25 @@ public class DashboardWindow {
         refresh();
     }
 
+    private SettingsPane getOrCreateSettingsPane() {
+        if (settingsPane == null) {
+            settingsPane = new SettingsPane(
+                    settingsSupplier,
+                    onSettingsApplied,
+                    onAddPersistedSnippet,
+                    onRemovePersistedSnippet,
+                    null);
+        }
+        return settingsPane;
+    }
+
     private void configureStage() {
         stage.setTitle(ReclipApp.APP_NAME);
         stage.setMinWidth(440);
         stage.setMinHeight(460);
         stage.setOnCloseRequest(event -> {
             event.consume();
-            stage.hide();
+            hide();
         });
         try (InputStream iconStream = getClass().getResourceAsStream("/icons/app-icon.png")) {
             if (iconStream != null) {
@@ -179,8 +194,9 @@ public class DashboardWindow {
             }
             boolean showSettings = newToggle == settingsTab;
             if (showSettings) {
-                settingsPane.reload();
-                contentStack.getChildren().setAll(settingsPane);
+                SettingsPane pane = getOrCreateSettingsPane();
+                pane.reload();
+                contentStack.getChildren().setAll(pane);
             } else {
                 contentStack.getChildren().setAll(recentView);
             }
@@ -195,7 +211,7 @@ public class DashboardWindow {
         Scene scene = new Scene(root, 460, 480);
         scene.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
             if (event.getCode() == KeyCode.ESCAPE && !isRecording()) {
-                stage.hide();
+                hide();
                 event.consume();
             } else if (event.getCode() == KeyCode.F && event.isShortcutDown() && recentTab.isSelected()) {
                 searchField.requestFocus();
@@ -209,20 +225,29 @@ public class DashboardWindow {
         stage.setScene(scene);
     }
 
-    private HBox buildNoticeBanner() {
+    private VBox buildNoticeBanner() {
         noticeLabel.setWrapText(true);
+        noticeLabel.setMaxWidth(Double.MAX_VALUE);
+        noticeLabel.setMinHeight(Region.USE_PREF_SIZE);
         noticeLabel.getStyleClass().add("notice-text");
-        HBox.setHgrow(noticeLabel, Priority.ALWAYS);
 
         noticeActionButton.getStyleClass().add("compact-button");
+        noticeActionButton.setMinWidth(Region.USE_PREF_SIZE);
         noticeActionButton.setOnAction(e -> MacOsPermissions.openAccessibilitySettings());
+
+        noticeInputMonitoringButton.getStyleClass().add("compact-button");
+        noticeInputMonitoringButton.setMinWidth(Region.USE_PREF_SIZE);
+        noticeInputMonitoringButton.setOnAction(e -> MacOsPermissions.openInputMonitoringSettings());
 
         Button dismissButton = new Button("Dismiss");
         dismissButton.getStyleClass().add("compact-button");
+        dismissButton.setMinWidth(Region.USE_PREF_SIZE);
         dismissButton.setOnAction(e -> hideNotice());
 
-        noticeBanner.getChildren().setAll(noticeLabel, noticeActionButton, dismissButton);
-        noticeBanner.setAlignment(Pos.CENTER_LEFT);
+        HBox noticeActions = new HBox(8, noticeActionButton, noticeInputMonitoringButton, dismissButton);
+        noticeActions.setAlignment(Pos.CENTER_LEFT);
+
+        noticeBanner.getChildren().setAll(noticeLabel, noticeActions);
         noticeBanner.getStyleClass().add("notice-banner");
         noticeBanner.setVisible(false);
         noticeBanner.setManaged(false);
@@ -244,6 +269,8 @@ public class DashboardWindow {
             boolean showAction = showAccessibilityButton && MacOsPermissions.isMacOs();
             noticeActionButton.setVisible(showAction);
             noticeActionButton.setManaged(showAction);
+            noticeInputMonitoringButton.setVisible(showAction);
+            noticeInputMonitoringButton.setManaged(showAction);
             noticeBanner.setVisible(true);
             noticeBanner.setManaged(true);
         };
@@ -260,13 +287,13 @@ public class DashboardWindow {
     }
 
     public boolean isRecording() {
-        return settingsPane.isRecording();
+        return settingsPane != null && settingsPane.isRecording();
     }
 
     public void show() {
         Runnable showTask = () -> {
             refresh();
-            if (settingsTab.isSelected()) {
+            if (settingsTab.isSelected() && settingsPane != null) {
                 settingsPane.reload();
             }
             if (stage.isIconified()) {
@@ -274,7 +301,7 @@ public class DashboardWindow {
             }
             stage.setOpacity(0);
             stage.show();
-            countdownTimeline.play();
+            syncCountdownTimeline();
             WindowFocusHelper.applyDarkTitleBar();
             WindowFocusHelper.activateAppOnly();
             stage.setOpacity(1);
@@ -289,12 +316,16 @@ public class DashboardWindow {
     }
 
     public void hide() {
-        countdownTimeline.stop();
-        imagePreviewSupport.hide();
-        if (Platform.isFxApplicationThread()) {
+        Runnable hideTask = () -> {
+            countdownTimeline.stop();
+            imagePreviewSupport.hide();
+            imagePreviewSupport.clearCache();
             stage.hide();
+        };
+        if (Platform.isFxApplicationThread()) {
+            hideTask.run();
         } else {
-            Platform.runLater(stage::hide);
+            Platform.runLater(hideTask);
         }
     }
 
@@ -318,6 +349,15 @@ public class DashboardWindow {
     private void updateResults(String query) {
         List<ClipboardEntry> matches = historyService.search(query);
         historyList.getItems().setAll(matches);
+        syncCountdownTimeline();
+    }
+
+    private void syncCountdownTimeline() {
+        if (stage.isShowing() && historyService.hasSensitiveEntries()) {
+            countdownTimeline.play();
+        } else {
+            countdownTimeline.stop();
+        }
     }
 
     private ListCell<ClipboardEntry> createEntryCell() {

@@ -122,6 +122,32 @@ public class HistoryService {
     }
 
     /**
+     * Returns {@code true} if at least one sensitive entry with an expiration is present.
+     *
+     * @return whether any sensitive entry exists
+     */
+    public boolean hasSensitiveEntries() {
+        return nextSensitiveExpiry().isPresent();
+    }
+
+    /**
+     * Returns the earliest expiration timestamp among sensitive entries, if any exist.
+     *
+     * @return earliest expiration instant, or empty if no sensitive entries have an expiry
+     */
+    public Optional<Instant> nextSensitiveExpiry() {
+        Instant earliest = null;
+        for (ClipboardEntry entry : repository.findAll()) {
+            if (entry.sensitive() && entry.expiresAt() != null) {
+                if (earliest == null || entry.expiresAt().isBefore(earliest)) {
+                    earliest = entry.expiresAt();
+                }
+            }
+        }
+        return Optional.ofNullable(earliest);
+    }
+
+    /**
      * Removes any sensitive entries whose expiration timestamp has passed.
      *
      * @param now current timestamp

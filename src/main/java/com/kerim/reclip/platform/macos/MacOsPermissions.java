@@ -18,6 +18,8 @@ public final class MacOsPermissions {
             "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices";
     private static final String ACCESSIBILITY_SETTINGS_URL =
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
+    private static final String INPUT_MONITORING_SETTINGS_URL =
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent";
 
     private MacOsPermissions() {
     }
@@ -58,11 +60,24 @@ public final class MacOsPermissions {
      * @return {@code true} if the open command was launched
      */
     public static boolean openAccessibilitySettings() {
+        return openSettingsUrl(ACCESSIBILITY_SETTINGS_URL);
+    }
+
+    /**
+     * Opens macOS System Settings directly to the Privacy &amp; Security Input Monitoring pane.
+     *
+     * @return {@code true} if the open command was launched
+     */
+    public static boolean openInputMonitoringSettings() {
+        return openSettingsUrl(INPUT_MONITORING_SETTINGS_URL);
+    }
+
+    private static boolean openSettingsUrl(String url) {
         if (!isMacOs()) {
             return false;
         }
         try {
-            new ProcessBuilder("open", ACCESSIBILITY_SETTINGS_URL).start();
+            new ProcessBuilder("open", url).start();
             return true;
         } catch (IOException | SecurityException e) {
             return false;
@@ -70,12 +85,14 @@ public final class MacOsPermissions {
     }
 
     /**
-     * Returns user-facing guidance for granting macOS Accessibility permission.
+     * Returns user-facing guidance for granting macOS Accessibility and Input Monitoring permissions.
      *
      * @return actionable guidance text
      */
     public static String accessibilityGuidance() {
-        return "Allow Reclip in System Settings → Privacy & Security → Accessibility "
-                + "(and Input Monitoring if prompted). If you updated the app, remove it (−) and add it back (+).";
+        return "Add Reclip to both permissions in System Settings:\n"
+                + "• System Settings → Privacy & Security → Accessibility\n"
+                + "• System Settings → Privacy & Security → Input Monitoring\n"
+                + "If you updated Reclip, remove the old entry (−), add it back (+), and restart Reclip.";
     }
 }

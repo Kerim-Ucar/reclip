@@ -222,7 +222,7 @@ public class PickerWindow {
             refresh();
             positionAtCursor();
             stage.show();
-            countdownTimeline.play();
+            syncCountdownTimeline();
             WindowFocusHelper.requestAppForeground();
             stage.toFront();
             stage.requestFocus();
@@ -260,14 +260,15 @@ public class PickerWindow {
     }
 
     private void hideInternal(boolean restorePreviousFocus, Runnable afterFocusRestore) {
-        countdownTimeline.stop();
-        imagePreviewSupport.hide();
-        if (activeContextMenu != null) {
-            activeContextMenu.hide();
-            activeContextMenu = null;
-        }
         outsideClickDetector.stop();
         Runnable hideTask = () -> {
+            countdownTimeline.stop();
+            imagePreviewSupport.hide();
+            imagePreviewSupport.clearCache();
+            if (activeContextMenu != null) {
+                activeContextMenu.hide();
+                activeContextMenu = null;
+            }
             showingInProgress = false;
             stage.hide();
             if (restorePreviousFocus) {
@@ -433,6 +434,15 @@ public class PickerWindow {
             historyList.getSelectionModel().selectFirst();
         }
         stage.setHeight(computePopupHeight(recent, maskPasswords));
+        syncCountdownTimeline();
+    }
+
+    private void syncCountdownTimeline() {
+        if (stage.isShowing() && historyService.hasSensitiveEntries()) {
+            countdownTimeline.play();
+        } else {
+            countdownTimeline.stop();
+        }
     }
 
     private static double computePopupHeight(List<ClipboardEntry> entries, boolean maskPasswords) {

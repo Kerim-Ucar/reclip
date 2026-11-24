@@ -73,9 +73,11 @@ public class SettingsPane extends VBox {
             AppSettings.DEFAULT_VISIBLE_COPIES);
     private final CheckBox autoPasteCheckBox = new CheckBox("Paste automatically after selecting in picker");
     private final Label permissionStatusLabel = new Label();
-    private final Button openPermissionsButton = new Button("Open Settings");
+    private final Button openPermissionsButton = new Button("Accessibility");
+    private final Button openInputMonitoringButton = new Button("Input Monitoring");
     private final Button recheckPermissionsButton = new Button("Re-check");
-    private final HBox permissionStatusRow = new HBox(8, permissionStatusLabel, openPermissionsButton, recheckPermissionsButton);
+    private final HBox permissionActionsRow = new HBox(8, openPermissionsButton, openInputMonitoringButton, recheckPermissionsButton);
+    private final VBox permissionStatusRow = new VBox(6, permissionStatusLabel, permissionActionsRow);
     private final TextField excludedAppsField = new TextField();
     private final CheckBox maskPasswordsCheckBox = new CheckBox("Hide password text as \"Password\"");
     private final CheckBox oneTimePasswordsCheckBox = new CheckBox("One-time use (remove after first copy/paste)");
@@ -207,16 +209,26 @@ public class SettingsPane extends VBox {
         });
 
         permissionStatusLabel.setWrapText(true);
-        HBox.setHgrow(permissionStatusLabel, Priority.ALWAYS);
+        permissionStatusLabel.setMaxWidth(Double.MAX_VALUE);
+        permissionStatusLabel.setMinHeight(Region.USE_PREF_SIZE);
         openPermissionsButton.getStyleClass().add("compact-button");
+        openPermissionsButton.setMinWidth(Region.USE_PREF_SIZE);
         openPermissionsButton.setOnAction(e -> {
             if (!MacOsPermissions.openAccessibilitySettings()) {
                 setStatus("Open System Settings → Privacy & Security → Accessibility manually.", true);
             }
         });
+        openInputMonitoringButton.getStyleClass().add("compact-button");
+        openInputMonitoringButton.setMinWidth(Region.USE_PREF_SIZE);
+        openInputMonitoringButton.setOnAction(e -> {
+            if (!MacOsPermissions.openInputMonitoringSettings()) {
+                setStatus("Open System Settings → Privacy & Security → Input Monitoring manually.", true);
+            }
+        });
         recheckPermissionsButton.getStyleClass().add("compact-button");
+        recheckPermissionsButton.setMinWidth(Region.USE_PREF_SIZE);
         recheckPermissionsButton.setOnAction(e -> refreshPermissionStatus());
-        permissionStatusRow.setAlignment(Pos.CENTER_LEFT);
+        permissionActionsRow.setAlignment(Pos.CENTER_LEFT);
         boolean macOs = MacOsPermissions.isMacOs();
         permissionStatusRow.setVisible(macOs);
         permissionStatusRow.setManaged(macOs);
@@ -507,15 +519,26 @@ public class SettingsPane extends VBox {
         if (trusted) {
             permissionStatusLabel.getStyleClass().add("permission-ok");
             permissionStatusLabel.setText("macOS Accessibility: Granted");
+            permissionActionsRow.setVisible(false);
+            permissionActionsRow.setManaged(false);
             openPermissionsButton.setVisible(false);
             openPermissionsButton.setManaged(false);
+            openInputMonitoringButton.setVisible(false);
+            openInputMonitoringButton.setManaged(false);
             recheckPermissionsButton.setVisible(false);
             recheckPermissionsButton.setManaged(false);
         } else {
             permissionStatusLabel.getStyleClass().add("permission-warn");
-            permissionStatusLabel.setText("macOS Accessibility: Required for global shortcuts & auto-paste");
+            permissionStatusLabel.setText(
+                    "macOS Permissions required for global shortcuts & auto-paste:\n"
+                            + "• System Settings → Privacy & Security → Accessibility\n"
+                            + "• System Settings → Privacy & Security → Input Monitoring");
+            permissionActionsRow.setVisible(true);
+            permissionActionsRow.setManaged(true);
             openPermissionsButton.setVisible(true);
             openPermissionsButton.setManaged(true);
+            openInputMonitoringButton.setVisible(true);
+            openInputMonitoringButton.setManaged(true);
             recheckPermissionsButton.setVisible(true);
             recheckPermissionsButton.setManaged(true);
         }

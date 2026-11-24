@@ -42,6 +42,20 @@ test {
     jvmArgs '--enable-native-access=ALL-UNNAMED'
 }
 
+def macRuntimeModules = 'java.base,java.desktop,java.logging,jdk.jfr'
+def macJvmBaseOptions = [
+        '--enable-native-access=ALL-UNNAMED',
+        '-XX:+UseSerialGC',
+        '-Xms8m',
+        '-Xmx60m',
+        '-XX:+TieredCompilation',
+        '-XX:TieredStopAtLevel=1',
+        '-Dprism.targetvram=16M',
+        '-Dprism.maxvram=64M'
+]
+
+def jdk25HomeProvider = javaToolchains.launcherFor(java.toolchain).map { it.metadata.installationPath.asFile }
+
 tasks.register('prepareJpackageInput', Sync) {
     dependsOn tasks.named('jar')
     from tasks.named('jar').get().archiveFile
@@ -49,8 +63,23 @@ tasks.register('prepareJpackageInput', Sync) {
     into layout.buildDirectory.dir('jpackage-input')
 }
 
+tasks.register('buildMacRuntime', Exec) {
+    def runtimeDir = layout.buildDirectory.dir('mac-runtime')
+    outputs.dir(runtimeDir)
+    doFirst {
+        delete runtimeDir.get().asFile
+        def jlinkBin = new File(jdk25HomeProvider.get(), 'bin/jlink')
+        commandLine jlinkBin.absolutePath,
+                '--add-modules', macRuntimeModules,
+                '--strip-debug',
+                '--no-header-files',
+                '--no-man-pages',
+                '--output', runtimeDir.get().asFile.absolutePath
+    }
+}
+
 tasks.register('packageMacApp', Exec) {
-    dependsOn tasks.named('prepareJpackageInput')
+    dependsOn tasks.named('prepareJpackageInput'), tasks.named('buildMacRuntime')
     doFirst {
         def iconSource = file('Smoked-glass clipboard with curved arrow.png')
         def iconsetDir = layout.buildDirectory.dir('icon/Reclip.iconset').get().asFile
@@ -73,30 +102,89 @@ tasks.register('packageMacApp', Exec) {
         if (iconResult != 0) {
             throw new GradleException("iconutil failed with exit code ${iconResult}")
         }
+
+        def jpackageBin = new File(jdk25HomeProvider.get(), 'bin/jpackage')
+        def cmd = [
+                jpackageBin.absolutePath,
+                '--type', 'app-image',
+                '--name', 'Reclip',
+                '--app-version', '1.0.0',
+                '--input', layout.buildDirectory.dir('jpackage-input').get().asFile.absolutePath,
+                '--runtime-image', layout.buildDirectory.dir('mac-runtime').get().asFile.absolutePath,
+                '--main-jar', tasks.named('jar').get().archiveFileName.get(),
+                '--main-class', 'com.kerim.reclip.app.Launcher',
+                '--icon', icnsFile.absolutePath,
+                '--mac-package-identifier', 'com.kerim.reclip'
+        ]
+        macJvmBaseOptions.each { opt ->
+            cmd.addAll(['--java-options', opt])
+        }
+        cmd.addAll([
+                '--java-options', '-XX:AOTCache=$APPDIR/reclip.aot',
+                '--java-options', '-XX:AOTMode=auto',
+                '--dest', distDir.absolutePath
+        ])
+        commandLine cmd
     }
 
-    commandLine 'jpackage',
-            '--type', 'app-image',
-            '--name', 'Reclip',
-            '--app-version', '1.0.0',
-            '--input', layout.buildDirectory.dir('jpackage-input').get().asFile.absolutePath,
-            '--main-jar', tasks.named('jar').get().archiveFileName.get(),
-            '--main-class', 'com.kerim.reclip.app.Launcher',
-            '--icon', layout.buildDirectory.file('icon/Reclip.icns').get().asFile.absolutePath,
-            '--mac-package-identifier', 'com.kerim.reclip',
-            '--java-options', '--enable-native-access=ALL-UNNAMED',
-            '--dest', layout.buildDirectory.dir('dist').get().asFile.absolutePath
+    doLast {
+        def appBundle = layout.buildDirectory.dir('dist/Reclip.app').get().asFile
+        def appDir = new File(appBundle, 'Contents/app')
+        def cfgFile = new File(appDir, 'Reclip.cfg')
+        def aotFile = new File(appDir, 'reclip.aot')
+        def runtimeJava = layout.buildDirectory.file('mac-runtime/bin/java').get().asFile
+
+        def cpEntries = []
+        cfgFile.eachLine('UTF-8') { line ->
+            def trimmed = line.trim()
+            if (trimmed.startsWith('app.mainjar=')) {
+                cpEntries.add(trimmed.substring('app.mainjar='.length()).replace('$APPDIR', appDir.absolutePath))
+            } else if (trimmed.startsWith('app.classpath=')) {
+                cpEntries.add(trimmed.substring('app.classpath='.length()).replace('$APPDIR', appDir.absolutePath))
+            }
+        }
+        if (cpEntries.isEmpty()) {
+            throw new GradleException("Could not parse classpath entries from ${cfgFile}")
+        }
+
+        def trainCmd = [runtimeJava.absolutePath]
+        trainCmd.addAll(macJvmBaseOptions)
+        trainCmd.addAll([
+                '-Dreclip.aot.train=true',
+                "-XX:AOTCacheOutput=${aotFile.absolutePath}".toString(),
+                '-cp', cpEntries.join(File.pathSeparator),
+                'com.kerim.reclip.app.Launcher'
+        ])
+        def trainResult = new ProcessBuilder(trainCmd.collect { it.toString() }).inheritIO().start().waitFor()
+        if (trainResult != 0 || !aotFile.isFile()) {
+            throw new GradleException("JDK 25 AOT cache generation failed (exit=${trainResult}, fileExists=${aotFile.isFile()})")
+        }
+
+        def bundledBinDir = new File(appBundle, 'Contents/runtime/Contents/Home/bin')
+        if (bundledBinDir.exists()) {
+            delete bundledBinDir
+        }
+
+        def signResult = new ProcessBuilder('codesign', '--force', '--deep', '--sign', '-', appBundle.absolutePath)
+                .inheritIO().start().waitFor()
+        if (signResult != 0) {
+            throw new GradleException("codesign failed with exit code ${signResult}")
+        }
+    }
 }
 
 tasks.register('packageMacDmg', Exec) {
     dependsOn tasks.named('packageMacApp')
-    commandLine 'jpackage',
-            '--type', 'dmg',
-            '--name', 'Reclip',
-            '--app-version', '1.0.0',
-            '--app-image', layout.buildDirectory.dir('dist/Reclip.app').get().asFile.absolutePath,
-            '--icon', layout.buildDirectory.file('icon/Reclip.icns').get().asFile.absolutePath,
-            '--dest', layout.buildDirectory.dir('dist').get().asFile.absolutePath
+    doFirst {
+        def jpackageBin = new File(jdk25HomeProvider.get(), 'bin/jpackage')
+        commandLine jpackageBin.absolutePath,
+                '--type', 'dmg',
+                '--name', 'Reclip',
+                '--app-version', '1.0.0',
+                '--app-image', layout.buildDirectory.dir('dist/Reclip.app').get().asFile.absolutePath,
+                '--icon', layout.buildDirectory.file('icon/Reclip.icns').get().asFile.absolutePath,
+                '--dest', layout.buildDirectory.dir('dist').get().asFile.absolutePath
+    }
 }
 
 tasks.register('generateWinIcon') {
